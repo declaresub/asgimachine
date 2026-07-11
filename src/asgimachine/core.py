@@ -16,6 +16,7 @@ from .conditional import http_date, if_none_match_matches, not_modified_since
 from .http import HaltResponse, HttpResponse, Status
 from .negotiation import choose_media_type
 from .resource import Ctx
+from .trace import TRACE_HEADER
 
 if TYPE_CHECKING:
     from .http import HttpRequest
@@ -24,14 +25,23 @@ if TYPE_CHECKING:
 SAFE_METHODS = frozenset({"GET", "HEAD"})
 
 
-async def run(resource: Resource, request: HttpRequest) -> HttpResponse:
-    """Walk the graph for one request and return an HttpResponse value object."""
+async def run(
+    resource: Resource, request: HttpRequest, *, debug: bool = False
+) -> HttpResponse:
+    """Walk the graph for one request and return an HttpResponse value object.
+
+    In ``debug`` mode the ordered node path is attached as the
+    ``X-Asgimachine-Trace`` response header on every exit path (§9).
+    """
 
     ctx = Ctx(request=request)
     try:
-        return await _walk(resource, ctx)
+        response = await _walk(resource, ctx)
     except HaltResponse as halt:
-        return halt.response
+        response = halt.response
+    if debug:
+        response.headers[TRACE_HEADER] = ctx.trace.header_value
+    return response
 
 
 def _halt(

@@ -71,7 +71,8 @@ def client_for():
 
     def _factory(toggles: Toggles):
         resource = ConfigurableResource(toggles)
-        app = build_app([resource_route("/r", resource)])
+        # debug=True so responses carry X-Asgimachine-Trace for assert_trace.
+        app = build_app([resource_route("/r", resource)], debug=True)
         return make_client(app)
 
     return _factory

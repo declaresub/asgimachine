@@ -10,9 +10,10 @@ from __future__ import annotations
 from .core import run
 from .http import HaltResponse, HttpRequest, HttpResponse, Status
 from .resource import Ctx, Producer, Resource
-from .trace import Trace, TraceEntry
+from .trace import TRACE_HEADER, Trace, TraceEntry
 
 __all__ = [
+    "TRACE_HEADER",
     "Ctx",
     "HaltResponse",
     "HttpRequest",

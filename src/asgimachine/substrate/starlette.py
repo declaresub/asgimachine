@@ -80,7 +80,9 @@ class _ResourceEndpoint:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         request = Request(scope, receive)
-        response = await run(self._resource, _StarletteRequest(request))
+        # Tie the decision-trace header to Starlette's own debug flag.
+        debug = bool(getattr(scope.get("app"), "debug", False))
+        response = await run(self._resource, _StarletteRequest(request), debug=debug)
         await _to_starlette(response)(scope, receive, send)
 
 
