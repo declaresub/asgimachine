@@ -159,8 +159,13 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
     if last_modified is not None:
         validator_headers["Last-Modified"] = http_date(last_modified)
 
+    # Caching (v3): Expires / Cache-Control, emitted on cacheable responses.
+    cache_headers = await _cache_headers(resource, ctx)
+    # Everything an intermediary keys/validates on, for both 200 and 304.
+    cacheable_headers = {**validator_headers, **vary_headers, **cache_headers}
+
     await _check_preconditions(
-        ctx, method, etag, last_modified, validator_headers, vary_headers
+        ctx, method, etag, last_modified, validator_headers, cacheable_headers
     )
 
     # Method dispatch (M/N/O). GET/HEAD build a representation; write methods run
@@ -169,7 +174,7 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
         # O18 build representation (HEAD suppresses the body). A producer that
         # returns an async iterator streams (§8).
         value = await producer(ctx)
-        headers = {"Content-Type": chosen, **validator_headers, **vary_headers}
+        headers = {"Content-Type": chosen, **cacheable_headers}
         ctx.trace.record("O18", int(Status.OK))
         return HttpResponse(
             status=int(Status.OK),
@@ -306,7 +311,7 @@ async def _check_preconditions(
     etag: str | None,
     last_modified: datetime | None,
     validator_headers: dict[str, str],
-    vary_headers: dict[str, str],
+    not_modified_headers: dict[str, str],
 ) -> None:
     """Evaluate conditional headers in canonical order (G8-L17).
 
@@ -333,7 +338,7 @@ async def _check_preconditions(
     if inm is not None and if_none_match_matches(inm, etag):
         if safe:
             ctx.trace.record("K13", int(Status.NOT_MODIFIED))
-            raise _not_modified({**validator_headers, **vary_headers})
+            raise _not_modified(not_modified_headers)
         raise _halt(ctx, "K13", Status.PRECONDITION_FAILED, dict(validator_headers))
 
     # L13/L17 If-Modified-Since -> 304 (GET/HEAD only, and only if If-None-Match
@@ -342,7 +347,7 @@ async def _check_preconditions(
         ims = headers.get("if-modified-since")
         if ims is not None and not_modified_since(ims, last_modified):
             ctx.trace.record("L17", int(Status.NOT_MODIFIED))
-            raise _not_modified({**validator_headers, **vary_headers})
+            raise _not_modified(not_modified_headers)
 
 
 async def _vary_headers(
@@ -354,6 +359,19 @@ async def _vary_headers(
     if len(offered) > 1 and "Accept" not in names:
         names.insert(0, "Accept")
     return {"Vary": ", ".join(names)} if names else {}
+
+
+async def _cache_headers(resource: Resource, ctx: Ctx) -> dict[str, str]:
+    """Build Expires / Cache-Control from the resource's caching callbacks (v3)."""
+
+    result: dict[str, str] = {}
+    expires = await resource.expires(ctx)
+    if expires is not None:
+        result["Expires"] = http_date(expires)
+    cache_control = await resource.cache_control(ctx)
+    if cache_control is not None:
+        result["Cache-Control"] = cache_control
+    return result
 
 
 def _body(value: object, *, head: bool) -> bytes | AsyncIterator[bytes]:

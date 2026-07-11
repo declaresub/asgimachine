@@ -88,6 +88,16 @@ class Resource:
     async def last_modified(self, ctx: Ctx) -> datetime | None:
         return None
 
+    # --- caching (v3): emitted on cacheable responses (200/304) ------------
+    async def expires(self, ctx: Ctx) -> datetime | None:
+        # -> Expires header.
+        return None
+
+    async def cache_control(self, ctx: Ctx) -> str | None:
+        # -> Cache-Control header, e.g. "public, max-age=31536000, immutable"
+        # for an archived, immutable feed page.
+        return None
+
     # --- C3/C4: content negotiation ---------------------------------------
     async def content_types_provided(self, ctx: Ctx) -> Sequence[tuple[str, Producer]]:
         return [("application/json", self.to_json)]

@@ -270,4 +270,4 @@ def make_app(store: Store | None = None, *, debug: bool = False) -> Starlette:
     )
 
 
-app = make_app()
+app = make_app(debug=True)
