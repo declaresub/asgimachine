@@ -10,9 +10,15 @@ decides; any node may raise :class:`HaltResponse` to short-circuit.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from .conditional import http_date, if_none_match_matches, not_modified_since
+from .conditional import (
+    http_date,
+    if_match_matches,
+    if_none_match_matches,
+    not_modified_since,
+)
 from .http import HaltResponse, HttpResponse, Status
 from .negotiation import choose_media_type, parse_content_type
 from .resource import Ctx
@@ -142,8 +148,8 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
     # cacheable responses (200 and 304) so intermediaries key correctly.
     vary_headers = await _vary_headers(resource, ctx, offered)
 
-    # Conditional GET (G8-L17 subset): compute validators once, reuse for both
-    # the precondition check and the final response headers.
+    # Conditional requests (G8-L17): compute validators once, reuse for the
+    # precondition checks and the final response headers.
     etag = await resource.generate_etag(ctx)
     last_modified = await resource.last_modified(ctx)
     validator_headers: dict[str, str] = {}
@@ -152,30 +158,13 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
     if last_modified is not None:
         validator_headers["Last-Modified"] = http_date(last_modified)
 
-    if method in SAFE_METHODS:
-        inm = request.headers.get("if-none-match")
-        if inm is not None and if_none_match_matches(inm, etag):
-            ctx.trace.record("K13", Status.NOT_MODIFIED)
-            raise HaltResponse(
-                HttpResponse(
-                    status=int(Status.NOT_MODIFIED),
-                    headers={**validator_headers, **vary_headers},
-                ),
-            )
-        ims = request.headers.get("if-modified-since")
-        # If-Modified-Since applies only when If-None-Match is absent.
-        if inm is None and ims is not None and not_modified_since(ims, last_modified):
-            ctx.trace.record("L17", Status.NOT_MODIFIED)
-            raise HaltResponse(
-                HttpResponse(
-                    status=int(Status.NOT_MODIFIED),
-                    headers={**validator_headers, **vary_headers},
-                ),
-            )
+    await _check_preconditions(
+        ctx, method, etag, last_modified, validator_headers, vary_headers
+    )
 
     # Method dispatch (M/N/O). GET/HEAD build a representation; write methods run
-    # their processing nodes. (412 preconditions + the G7-false create/redirect
-    # branch arrive in later M2 slices.)
+    # their processing nodes. (The G7-false create/redirect branch arrives in a
+    # later M2 slice.)
     if method in SAFE_METHODS:
         # O18 build representation (HEAD suppresses the body).
         value = await producer(ctx)
@@ -266,6 +255,55 @@ async def _write(
     ctx.trace.record("O14", False)
     value = await _apply_acceptor(resource, ctx)
     return _finish(ctx, Status.OK, value, chosen, headers)
+
+
+def _not_modified(headers: dict[str, str]) -> HaltResponse:
+    return HaltResponse(HttpResponse(status=int(Status.NOT_MODIFIED), headers=headers))
+
+
+async def _check_preconditions(
+    ctx: Ctx,
+    method: str,
+    etag: str | None,
+    last_modified: datetime | None,
+    validator_headers: dict[str, str],
+    vary_headers: dict[str, str],
+) -> None:
+    """Evaluate conditional headers in canonical order (G8-L17).
+
+    ``If-Match`` / ``If-Unmodified-Since`` fail with 412. ``If-None-Match`` yields
+    304 for GET/HEAD but 412 for writes. ``If-Modified-Since`` yields 304 for
+    GET/HEAD. Nodes are recorded only when they fire (short-circuit).
+    """
+
+    headers = ctx.request.headers
+    safe = method in SAFE_METHODS
+
+    # G8/G11 If-Match -> 412
+    ifm = headers.get("if-match")
+    if ifm is not None and not if_match_matches(ifm, etag):
+        raise _halt(ctx, "G11", Status.PRECONDITION_FAILED, dict(validator_headers))
+
+    # H10/H12 If-Unmodified-Since -> 412
+    ius = headers.get("if-unmodified-since")
+    if ius is not None and not not_modified_since(ius, last_modified):
+        raise _halt(ctx, "H12", Status.PRECONDITION_FAILED, dict(validator_headers))
+
+    # I12/K13 If-None-Match -> 304 (GET/HEAD) / 412 (writes)
+    inm = headers.get("if-none-match")
+    if inm is not None and if_none_match_matches(inm, etag):
+        if safe:
+            ctx.trace.record("K13", int(Status.NOT_MODIFIED))
+            raise _not_modified({**validator_headers, **vary_headers})
+        raise _halt(ctx, "K13", Status.PRECONDITION_FAILED, dict(validator_headers))
+
+    # L13/L17 If-Modified-Since -> 304 (GET/HEAD only, and only if If-None-Match
+    # was absent).
+    if safe and inm is None:
+        ims = headers.get("if-modified-since")
+        if ims is not None and not_modified_since(ims, last_modified):
+            ctx.trace.record("L17", int(Status.NOT_MODIFIED))
+            raise _not_modified({**validator_headers, **vary_headers})
 
 
 async def _vary_headers(

@@ -47,6 +47,27 @@ def if_none_match_matches(header: str, etag: str | None) -> bool:
     return False
 
 
+def if_match_matches(header: str, etag: str | None) -> bool:
+    """True when ``If-Match`` is satisfied (→ proceed); False means 412.
+
+    ``*`` is satisfied by any existing representation (the caller only evaluates
+    this on the resource-exists branch). Otherwise the current ETag must appear
+    in the list.
+    """
+
+    header = header.strip()
+    if header == "*":
+        return True
+    if etag is None:
+        return False
+    _, current = _split_etag(etag)
+    for candidate in header[:_MAX_INM_LEN].split(",")[:_MAX_ETAGS]:
+        _, tag = _split_etag(candidate)
+        if tag == current:
+            return True
+    return False
+
+
 def not_modified_since(header: str, last_modified: datetime | None) -> bool:
     """True when the resource was NOT modified after ``If-Modified-Since`` (→ 304)."""
 
