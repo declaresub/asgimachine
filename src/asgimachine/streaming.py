@@ -8,6 +8,14 @@ frames and wrap a stream so a mid-stream failure becomes an SSE ``error`` event.
 **Post-commit boundary.** Once streaming starts, the status line is on the wire;
 a later failure cannot become a 500. :func:`guard_sse` is the recommended pattern
 — it converts an exception raised after commit into an ``event: error`` frame.
+
+**Client disconnect.** Disconnect handling is rented from the substrate (§2.1):
+Starlette cancels the streaming task (an anyio task group) when the client goes
+away. Cancellation propagates into the producer as ``CancelledError`` /
+``GeneratorExit``, so producers should release resources in ``try/finally``.
+:func:`guard_sse` catches only :class:`Exception`, never the cancellation
+:class:`BaseException`\\ s, so a disconnect stops the stream and runs cleanup
+rather than being swallowed into an error frame.
 """
 
 from __future__ import annotations
@@ -65,6 +73,8 @@ async def guard_sse(
     try:
         async for chunk in source:
             yield chunk
-    except Exception as exc:  # noqa: BLE001 — post-commit: all failures become an SSE frame
+    except Exception as exc:  # noqa: BLE001 — post-commit: app failures become a frame
+        # Only Exception: cancellation (CancelledError/GeneratorExit on client
+        # disconnect) is a BaseException and must propagate so the stream stops.
         payload = format_error(exc) if format_error is not None else "internal error"
         yield sse_error(payload)
