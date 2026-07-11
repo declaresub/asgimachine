@@ -7,7 +7,6 @@ valid_content_headers 501, B5 known_content_type 415, B4 valid_entity_length 413
 
 from __future__ import annotations
 
-import json
 
 from asgimachine.resource import Ctx, Resource
 from asgimachine.substrate.starlette import build_app, resource_route
@@ -47,12 +46,10 @@ class NotesResource(Resource):
     async def valid_entity_length(self, ctx: Ctx) -> bool:
         return not self._too_large
 
-    async def content_types_accepted(self, ctx: Ctx):
-        return [("application/json", self._store_note)]
+    CONSUMES = ("application/json",)
 
-    async def _store_note(self, ctx: Ctx) -> None:
-        data = json.loads(await ctx.request.body())
-        self._store[data["id"]] = data["content"]
+    async def apply(self, ctx: Ctx, body: dict[str, str]) -> None:
+        self._store[body["id"]] = body["content"]
         return None  # -> 204 (PUT) / 201 no body (POST create)
 
     async def is_conflict(self, ctx: Ctx) -> bool:
@@ -100,6 +97,7 @@ def test_put_updates_and_returns_204() -> None:
             "C4",
             "G7",
             "O14",
+            "P0",
             "O20",
         ],
     )
@@ -140,6 +138,7 @@ def test_post_create_returns_201_with_location() -> None:
             "C4",
             "G7",
             "N11",
+            "P0",
             "O20",
         ],
     )

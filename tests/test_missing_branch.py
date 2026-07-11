@@ -6,7 +6,6 @@ previously_existed routes to 301/307/410; otherwise 404.
 
 from __future__ import annotations
 
-import json
 
 from asgimachine.resource import Ctx, Resource
 from asgimachine.substrate.starlette import build_app, resource_route
@@ -36,12 +35,10 @@ class MissingResource(Resource):
     async def resource_exists(self, ctx: Ctx) -> bool:
         return False
 
-    async def content_types_accepted(self, ctx: Ctx):
-        return [("application/json", self._accept)]
+    CONSUMES = ("application/json",)
 
-    async def _accept(self, ctx: Ctx) -> None:
-        data = json.loads(await ctx.request.body())
-        self._store[data["id"]] = data["content"]
+    async def apply(self, ctx: Ctx, body: dict[str, str]) -> None:
+        self._store[body["id"]] = body["content"]
         return None
 
     async def is_conflict(self, ctx: Ctx) -> bool:
@@ -87,6 +84,7 @@ def test_put_to_missing_creates_201() -> None:
             "G7",
             "I7",
             "P3",
+            "P0",
             "O20",
         ],
     )

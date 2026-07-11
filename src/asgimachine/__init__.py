@@ -12,14 +12,13 @@ from .command import Command, json_response
 from .core import run
 from .http import HaltResponse, HttpRequest, HttpResponse, Status, serialize
 from .policy import Decision, Effect, NamedRule, Policy, RuleEngine
-from .resource import Acceptor, Ctx, Producer, Resource
+from .resource import Ctx, Producer, Resource
 from .schema import Operation, ResourceDescription, generate_openapi
 from .trace import TRACE_HEADER, Trace, TraceEntry
 
 __all__ = [
     "DEFAULT_CODECS",
     "TRACE_HEADER",
-    "Acceptor",
     "Codec",
     "Command",
     "Ctx",

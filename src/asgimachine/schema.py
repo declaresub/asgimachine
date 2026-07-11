@@ -91,12 +91,12 @@ def _auto_error_statuses(resource: Resource, method: str) -> set[int]:
     if method in _READ_METHODS:
         statuses.add(406)  # content negotiation always runs for a representation
     if method in _BODY_METHODS:
+        if resource.CONSUMES:
+            # A parsed body -> 415 (unknown Content-Type) + 400 (parse failure).
+            statuses.add(415)
+            statuses.add(400)
         if _overrides(resource, "malformed_request"):
             statuses.add(400)
-        if _overrides(resource, "known_content_type") or _overrides(
-            resource, "content_types_accepted"
-        ):
-            statuses.add(415)
         if _overrides(resource, "valid_entity_length"):
             statuses.add(413)
         if _overrides(resource, "valid_content_headers"):

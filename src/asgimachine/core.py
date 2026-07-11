@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, get_type_hints
 
 from .codec import DEFAULT_CODECS
 from .conditional import (
@@ -28,7 +28,7 @@ from .trace import TRACE_HEADER
 if TYPE_CHECKING:
     from .codec import Codec
     from .http import HttpRequest
-    from .resource import Acceptor, Resource
+    from .resource import Resource
 
 SAFE_METHODS = frozenset({"GET", "HEAD"})
 # Methods that carry a request body; the body-validation nodes (B9/B6/B5/B4) are
@@ -198,21 +198,45 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
 # --- write path (§4 v2) ----------------------------------------------------
 
 
-async def _select_acceptor(resource: Resource, ctx: Ctx) -> Acceptor | None:
+def _parse_body(structured: object, model_type: object) -> object:
+    """Semantic parse: structured -> a typed model (Pydantic ``model_validate``
+    when the type supports it); otherwise pass the decoded structure through."""
+
+    if model_type is None or model_type is object:
+        return structured
+    model_validate = getattr(model_type, "model_validate", None)
+    if callable(model_validate):
+        return model_validate(structured)  # raises ValueError on a bad body
+    return structured
+
+
+def _apply_body_type(resource: Resource) -> object | None:
+    """The declared type of apply()'s ``body`` param (for the semantic parse)."""
+
+    try:
+        return get_type_hints(type(resource).apply).get("body")
+    except Exception:  # noqa: BLE001 — unresolvable annotation -> no model parse
+        return None
+
+
+async def _apply(resource: Resource, ctx: Ctx) -> object:
+    """Decode + parse the request body (parse, don't validate) and run apply().
+
+    The body is decoded by the negotiated codec and parsed into apply()'s
+    declared ``body`` type; a failure at either step is a 400, recorded at P0.
+    """
+
     media = parse_content_type(ctx.request.headers.get("content-type"))
-    for mtype, acceptor in await resource.content_types_accepted(ctx):
-        if mtype == media:
-            return acceptor
-    return None
-
-
-async def _apply_acceptor(resource: Resource, ctx: Ctx) -> object:
-    """Run the acceptor matching the request Content-Type; 415 if none matches."""
-
-    acceptor = await _select_acceptor(resource, ctx)
-    if acceptor is None:
+    codec = ctx.codecs.get(media or "")
+    if codec is None:
         raise _halt(ctx, "B5", Status.UNSUPPORTED_MEDIA_TYPE)
-    return await acceptor(ctx)
+    try:
+        structured = codec.decode(await ctx.request.body())
+        body = _parse_body(structured, _apply_body_type(resource))
+    except ValueError, TypeError, UnicodeDecodeError:
+        raise _halt(ctx, "P0", Status.BAD_REQUEST) from None
+    ctx.trace.record("P0", True)
+    return await resource.apply(ctx, body)
 
 
 def _finish(
@@ -251,7 +275,7 @@ async def _post(
     if await resource.post_is_create(ctx):
         ctx.trace.record("N11", True)
         location = await resource.create_path(ctx)
-        value = await _apply_acceptor(resource, ctx)
+        value = await _apply(resource, ctx)
         return _finish(
             ctx, Status.CREATED, value, chosen, {**headers, "Location": location}
         )
@@ -267,7 +291,7 @@ async def _write(
     if await resource.is_conflict(ctx):
         raise _halt(ctx, "O14", Status.CONFLICT)
     ctx.trace.record("O14", False)
-    value = await _apply_acceptor(resource, ctx)
+    value = await _apply(resource, ctx)
     return _finish(ctx, Status.OK, value, chosen, headers)
 
 
@@ -286,7 +310,7 @@ async def _handle_missing(
         if await resource.is_conflict(ctx):
             raise _halt(ctx, "P3", Status.CONFLICT)
         ctx.trace.record("P3", False)
-        value = await _apply_acceptor(resource, ctx)
+        value = await _apply(resource, ctx)
         return _finish(ctx, Status.CREATED, value, chosen, {})
 
     # K7 previously_existed? -> K5 moved_permanently 301 / L5 moved_temporarily

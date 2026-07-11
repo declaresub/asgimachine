@@ -154,6 +154,7 @@ def test_owner_write_trace_shows_owner_rule(app_ctx) -> None:
             "C4",
             "G7",
             "O14",
+            "P0",
             "O20",
         ],
     )

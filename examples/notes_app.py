@@ -19,6 +19,7 @@ import json
 import secrets
 from dataclasses import dataclass, field
 
+from pydantic import BaseModel
 from starlette.applications import Starlette
 
 from asgimachine.command import Command, json_response
@@ -28,12 +29,15 @@ from asgimachine.resource import Ctx, Resource
 from asgimachine.schema import Operation, ResourceDescription, generate_openapi
 from asgimachine.substrate.starlette import build_app, command_route, resource_route
 
-# Reusable JSON Schemas for the note payloads (raw dicts — Pydantic optional).
-_NOTE_INPUT = {
-    "type": "object",
-    "required": ["text"],
-    "properties": {"text": {"type": "string"}},
-}
+
+class NoteInput(BaseModel):
+    """The request body model — the core parses the body into this (400 on a bad
+    body), so no malformed_request check is needed (parse, don't validate)."""
+
+    text: str
+
+
+# Response schema for a single note (a raw JSON Schema dict — Pydantic optional).
 _NOTE = {
     "type": "object",
     "properties": {
@@ -152,18 +156,7 @@ class NotesCollection(Resource):
         ctx.user = user
         return True
 
-    async def malformed_request(self, ctx: Ctx) -> bool:
-        try:
-            body = json.loads(await ctx.request.body())
-        except ValueError, UnicodeDecodeError:
-            return True
-        if not isinstance(body, dict) or "text" not in body:
-            return True
-        ctx.extra["body"] = body
-        return False
-
-    async def content_types_accepted(self, ctx: Ctx):
-        return [("application/json", self._create)]
+    CONSUMES = ("application/json",)
 
     async def post_is_create(self, ctx: Ctx) -> bool:
         return True
@@ -173,11 +166,9 @@ class NotesCollection(Resource):
         ctx.extra["new_id"] = note_id
         return f"/notes/{note_id}"
 
-    async def _create(self, ctx: Ctx) -> None:
+    async def apply(self, ctx: Ctx, body: NoteInput) -> None:
         note_id = ctx.extra["new_id"]
-        self._store.notes[note_id] = Note(
-            note_id, ctx.user.username, ctx.extra["body"]["text"]
-        )
+        self._store.notes[note_id] = Note(note_id, ctx.user.username, body.text)
         return None
 
     async def represent(self, ctx: Ctx) -> object:
@@ -190,7 +181,7 @@ class NotesCollection(Resource):
                 summary="List your notes", responses={200: {"type": "object"}}
             ),
             post=Operation(
-                summary="Create a note", request=_NOTE_INPUT, responses={201: None}
+                summary="Create a note", request=NoteInput, responses={201: None}
             ),
         )
 
@@ -225,26 +216,14 @@ class NoteMember(Resource):
         note: Note | None = ctx.entity
         return f'"{note.id}-{note.version}"' if note is not None else None
 
-    async def malformed_request(self, ctx: Ctx) -> bool:
-        try:
-            body = json.loads(await ctx.request.body())
-        except ValueError, UnicodeDecodeError:
-            return True
-        if not isinstance(body, dict) or "text" not in body:
-            return True
-        ctx.extra["body"] = body
-        return False
+    CONSUMES = ("application/json",)
 
-    async def content_types_accepted(self, ctx: Ctx):
-        return [("application/json", self._update)]
-
-    async def _update(self, ctx: Ctx) -> None:
+    async def apply(self, ctx: Ctx, body: NoteInput) -> None:
         note_id = ctx.request.path_params["id"]
-        text = ctx.extra["body"]["text"]
         if ctx.entity is None:  # PUT-create (reached the missing branch)
-            self._store.notes[note_id] = Note(note_id, ctx.user.username, text)
+            self._store.notes[note_id] = Note(note_id, ctx.user.username, body.text)
         else:
-            ctx.entity.text = text
+            ctx.entity.text = body.text
             ctx.entity.version += 1
         return None
 
@@ -263,7 +242,7 @@ class NoteMember(Resource):
             get=Operation(summary="Read a note", responses={200: _NOTE}),
             put=Operation(
                 summary="Create or update a note",
-                request=_NOTE_INPUT,
+                request=NoteInput,
                 responses={201: None, 204: None},
             ),
             delete=Operation(summary="Delete a note", responses={204: None}),

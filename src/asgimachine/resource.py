@@ -26,11 +26,6 @@ if TYPE_CHECKING:
 # A producer turns the resolved context into a representation value (§6).
 Producer = Callable[["Ctx"], Awaitable[Any]]
 
-# An acceptor consumes the request body (parse + apply the write) for one request
-# Content-Type. Its return is the response representation: a value -> 200 + body,
-# None -> 204 (no content). See §6 and the write path in core.
-Acceptor = Callable[["Ctx"], Awaitable[Any]]
-
 
 @dataclass(slots=True)
 class Ctx:
@@ -47,8 +42,6 @@ class Ctx:
     allowed_methods: frozenset[str] = field(default_factory=frozenset[str])
     user: Any = None
     entity: Any = None
-    # The acceptor selected for a write request's Content-Type (set at B5).
-    acceptor: Acceptor | None = None
     extra: dict[str, Any] = field(default_factory=dict[str, Any])
     # Framework config: the media-type -> Codec registry for this request.
     codecs: dict[str, Codec] = field(default_factory=dict[str, "Codec"])
@@ -133,19 +126,28 @@ class Resource:
     async def valid_entity_length(self, ctx: Ctx) -> bool:  # B4 -> 413
         return True
 
-    # Acceptors mirror producers on the write side: each handles one request
-    # Content-Type. Empty by default — a read-only resource declares none.
-    async def content_types_accepted(self, ctx: Ctx) -> Sequence[tuple[str, Acceptor]]:
-        return []
+    # The mirror of PRODUCES on the write side: request Content-Types this
+    # resource accepts. Empty by default (a read-only resource declares none).
+    CONSUMES: tuple[str, ...] = ()
+
+    async def apply(self, ctx: Ctx, body: Any) -> Any:
+        # The write handler for PUT/PATCH/POST-create. The core decodes the
+        # request via the negotiated codec and parses it into ``body``'s declared
+        # type before calling this — annotate ``body: NoteInput`` (a Pydantic
+        # model) and a bad body is a 400 (parse, don't validate). Annotate it
+        # loosely (``dict``/``object``) to receive the decoded structure as-is.
+        # Its return is the response representation.
+        raise NotImplementedError(
+            f"{type(self).__name__} accepts writes but does not implement apply().",
+        )
 
     async def known_content_type(self, ctx: Ctx) -> bool:
-        # B5 -> 415. Default: if the resource declares acceptors, the request's
-        # Content-Type must match one of them; otherwise anything is accepted.
-        accepted = await self.content_types_accepted(ctx)
-        if not accepted:
+        # B5 -> 415. Default: if the resource declares CONSUMES, the request's
+        # Content-Type must be one of them; otherwise anything is accepted.
+        if not self.CONSUMES:
             return True
         media = parse_content_type(ctx.request.headers.get("content-type"))
-        return media is not None and media in {mtype for mtype, _ in accepted}
+        return media is not None and media in self.CONSUMES
 
     async def is_conflict(self, ctx: Ctx) -> bool:
         # O14 -> 409. e.g. a PUT that would violate an invariant.

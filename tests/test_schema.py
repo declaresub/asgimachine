@@ -106,13 +106,9 @@ class GuardedResource(Resource):
     async def generate_etag(self, ctx: Ctx) -> str | None:
         return '"e"'
 
-    async def malformed_request(self, ctx: Ctx) -> bool:
-        return False
+    CONSUMES = ("application/json",)
 
-    async def content_types_accepted(self, ctx: Ctx):
-        return [("application/json", self._accept)]
-
-    async def _accept(self, ctx: Ctx) -> None:
+    async def apply(self, ctx: Ctx, body: dict[str, object]) -> None:
         return None
 
     async def represent(self, ctx: Ctx) -> object:
@@ -199,10 +195,9 @@ class StrictWriteResource(Resource):
     async def is_conflict(self, ctx: Ctx) -> bool:
         return False
 
-    async def content_types_accepted(self, ctx: Ctx):
-        return [("application/json", self._accept)]
+    CONSUMES = ("application/json",)
 
-    async def _accept(self, ctx: Ctx) -> None:
+    async def apply(self, ctx: Ctx, body: dict[str, object]) -> None:
         return None
 
     async def represent(self, ctx: Ctx) -> object:
@@ -218,6 +213,7 @@ def test_write_validation_and_conflict_auto_errors() -> None:
     )
     assert set(doc["paths"]["/s"]["put"]["responses"]) == {
         "204",
+        "400",
         "409",
         "413",
         "415",

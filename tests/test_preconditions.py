@@ -57,10 +57,9 @@ class WriteResource(Resource):
     async def generate_etag(self, ctx: Ctx) -> str | None:
         return 'W/"w1"'
 
-    async def content_types_accepted(self, ctx: Ctx):
-        return [("application/json", self._accept)]
+    CONSUMES = ("application/json",)
 
-    async def _accept(self, ctx: Ctx) -> None:
+    async def apply(self, ctx: Ctx, body: dict[str, object]) -> None:
         return None
 
     async def represent(self, ctx: Ctx) -> object:
