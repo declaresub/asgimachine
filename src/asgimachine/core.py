@@ -10,8 +10,9 @@ decides; any node may raise :class:`HaltResponse` to short-circuit.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .conditional import (
     http_date,
@@ -164,15 +165,18 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
     )
 
     # Method dispatch (M/N/O). GET/HEAD build a representation; write methods run
-    # their processing nodes. (The G7-false create/redirect branch arrives in a
-    # later M2 slice.)
+    # their processing nodes.
     if method in SAFE_METHODS:
-        # O18 build representation (HEAD suppresses the body).
+        # O18 build representation (HEAD suppresses the body). A producer that
+        # returns an async iterator streams (§8).
         value = await producer(ctx)
-        body = b"" if method == "HEAD" else _serialize(value)
         headers = {"Content-Type": chosen, **validator_headers, **vary_headers}
         ctx.trace.record("O18", int(Status.OK))
-        return HttpResponse(status=int(Status.OK), headers=headers, body=body)
+        return HttpResponse(
+            status=int(Status.OK),
+            headers=headers,
+            body=_body(value, head=method == "HEAD"),
+        )
 
     if method == "DELETE":
         return await _delete(resource, ctx, vary_headers)
@@ -215,7 +219,7 @@ def _finish(
     return HttpResponse(
         status=int(status),
         headers={"Content-Type": chosen, **headers},
-        body=_serialize(value),
+        body=_body(value, head=False),
     )
 
 
@@ -351,6 +355,20 @@ async def _vary_headers(
     if len(offered) > 1 and "Accept" not in names:
         names.insert(0, "Accept")
     return {"Vary": ", ".join(names)} if names else {}
+
+
+def _body(value: object, *, head: bool) -> bytes | AsyncIterator[bytes]:
+    """Turn a producer/acceptor return into a response body.
+
+    HEAD suppresses it; an async iterator streams untouched (§8); anything else
+    is serialized to bytes.
+    """
+
+    if head:
+        return b""
+    if isinstance(value, AsyncIterator):
+        return cast("AsyncIterator[bytes]", value)
+    return _serialize(value)
 
 
 def _serialize(value: Any) -> bytes:
