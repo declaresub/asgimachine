@@ -10,6 +10,12 @@ from __future__ import annotations
 from datetime import datetime, UTC
 from email.utils import format_datetime, parsedate_to_datetime
 
+# Defensive input bounds on the client-supplied If-None-Match list (no RFC limit
+# on its length). Beyond the cap we stop scanning: a match among the first N
+# tags still returns 304; the tail can only have produced more matches.
+_MAX_INM_LEN = 8192
+_MAX_ETAGS = 64
+
 
 def _split_etag(raw: str) -> tuple[bool, str]:
     """Return ``(is_weak, opaque_tag)`` for a single entity-tag token."""
@@ -34,7 +40,7 @@ def if_none_match_matches(header: str, etag: str | None) -> bool:
     if header == "*":
         return True
     _, current = _split_etag(etag)
-    for candidate in header.split(","):
+    for candidate in header[:_MAX_INM_LEN].split(",")[:_MAX_ETAGS]:
         _, tag = _split_etag(candidate)
         if tag == current:
             return True

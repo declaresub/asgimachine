@@ -19,6 +19,9 @@ from ..core import run
 from ..http import HttpResponse
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from starlette.middleware import Middleware
     from starlette.routing import BaseRoute
     from starlette.types import Receive, Scope, Send
 
@@ -87,7 +90,27 @@ def resource_route(path: str, resource: Resource) -> Route:
     return Route(path, _ResourceEndpoint(resource), name=type(resource).__name__)
 
 
-def build_app(routes: list[BaseRoute], *, debug: bool = False) -> Starlette:
-    """Assemble the composition root into an ASGI application."""
+def build_app(
+    routes: list[BaseRoute],
+    *,
+    debug: bool = False,
+    middleware: Sequence[Middleware] | None = None,
+) -> Starlette:
+    """Assemble the composition root into an ASGI application.
 
-    return Starlette(debug=debug, routes=routes)
+    ``middleware`` is passed straight to Starlette, so cross-cutting concerns are
+    rented rather than baked into the graph (PLAN.md §2.1). CORS in particular is
+    its own decision machine — mount Starlette's ``CORSMiddleware`` here and true
+    preflights are answered before a request ever reaches the graph, while actual
+    responses get their ``Access-Control-*`` headers on the way out::
+
+        from starlette.middleware import Middleware
+        from starlette.middleware.cors import CORSMiddleware
+
+        build_app(
+            routes,
+            middleware=[Middleware(CORSMiddleware, allow_origins=["https://app.example"])],
+        )
+    """
+
+    return Starlette(debug=debug, routes=routes, middleware=middleware)

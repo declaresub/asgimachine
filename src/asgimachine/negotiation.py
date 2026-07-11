@@ -7,12 +7,35 @@ Full ``Accept-Language``/``Charset``/``Encoding`` negotiation is v3.
 
 from __future__ import annotations
 
+import math
+
+# Defensive input bounds. A client-supplied Accept has no RFC length limit, and
+# selection is O(ranges x offers); cap the work an adversarial header can force.
+# Excess ranges are ignored (logged as a silent cap only in that they're dropped
+# past the bound), not an error — a truncated Accept still negotiates sanely.
+_MAX_ACCEPT_LEN = 8192
+_MAX_RANGES = 64
+
+
+def _clamp_qvalue(value: str) -> float:
+    """Parse a qvalue, clamped to [0, 1]. Rejects nan/inf (RFC 9110 §12.4.2)."""
+
+    try:
+        q = float(value)
+    except ValueError:
+        return 0.0
+    if math.isnan(q):
+        return 0.0
+    return max(0.0, min(1.0, q))
+
 
 def _parse_accept(header: str) -> list[tuple[str, str, float]]:
     """Return ``(type, subtype, q)`` triples, unsorted. Malformed parts drop."""
 
     parsed: list[tuple[str, str, float]] = []
-    for raw in header.split(","):
+    for raw in header[:_MAX_ACCEPT_LEN].split(","):
+        if len(parsed) >= _MAX_RANGES:
+            break
         part = raw.strip()
         if not part:
             continue
@@ -25,10 +48,7 @@ def _parse_accept(header: str) -> list[tuple[str, str, float]]:
         for param in params.split(";"):
             key, _, value = param.strip().partition("=")
             if key.strip().lower() == "q":
-                try:
-                    q = float(value)
-                except ValueError:
-                    q = 0.0
+                q = _clamp_qvalue(value)
         parsed.append((mtype.strip().lower(), subtype.strip().lower(), q))
     return parsed
 
