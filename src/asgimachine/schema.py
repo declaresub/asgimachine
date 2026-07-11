@@ -1,15 +1,27 @@
 """OpenAPI 3.1 generation from resource declarations (PLAN.md §10).
 
-The least-designed piece (§14) — this is an honest first cut. Resources opt in by
-implementing :meth:`Resource.describe`; :func:`generate_openapi` walks the
-``(path, resource)`` pairs and emits an OpenAPI document. Pydantic is optional: a
-model exposing ``model_json_schema()`` is converted, and a raw JSON-Schema
-``dict`` is used as-is. A route without a ``describe()`` is simply absent from the
-schema — acceptable during incremental adoption (§10).
+The generator leans on what the framework uniquely knows — the decision graph is
+itself a schema of outcomes:
 
-Known limits of this cut: no security schemes, examples, or response-header
-declarations; a model's ``$defs`` are inlined per-operation rather than deduped
-into ``components``; the command lane is out of scope (graph routes only).
+- **Methods** come from ``Resource.ALLOWED_METHODS`` (static since it's resource
+  shape, not behavior). ``describe()`` no longer repeats the method list.
+- **The error/status surface is auto-derived** from which callbacks a subclass
+  overrides: override ``is_authorized`` and you get 401; ``forbidden`` → 403;
+  ``resource_exists`` → 404; ``content_types_accepted`` → 415/400; ``generate_etag``
+  → 304/412; and so on, method-aware. So ``describe()`` declares only the
+  *success* bodies and the generator fills in the errors.
+- **Security** is declared: pass ``security_schemes`` + a document-level
+  ``security`` default; a per-operation ``Operation.security`` overrides it
+  (``[]`` marks a public operation).
+
+Pydantic is optional (a model with ``model_json_schema()`` is converted, a raw
+JSON-Schema dict is used as-is). A route without a ``describe()`` is absent from
+the schema — acceptable during incremental adoption (§10).
+
+Known limits (first cut): the auto-error mapping is a documented heuristic, not a
+proof; no examples or response-header declarations; model ``$defs`` are inlined
+per-operation rather than deduped into ``components``; the command lane is out of
+scope (graph routes only).
 """
 
 from __future__ import annotations
@@ -19,28 +31,38 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, cast
 
+from .resource import Resource
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-
-    from .resource import Resource
 
 # A model is either a class exposing ``model_json_schema()`` (e.g. a Pydantic
 # BaseModel) or a raw JSON Schema dict. ``None`` means "no body".
 Model = type | dict[str, Any]
 
+_BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
+_EXISTENCE_METHODS = frozenset({"GET", "HEAD", "DELETE", "PATCH"})
+_READ_METHODS = frozenset({"GET", "HEAD"})
+_DOCUMENTABLE = ("get", "post", "put", "patch", "delete")
+
 
 @dataclass(frozen=True, slots=True)
 class Operation:
-    """One HTTP method's typed surface on a resource."""
+    """One HTTP method's declared surface. Errors are auto-derived; declare the
+    success bodies. ``security``: ``None`` inherits the document default, ``[]``
+    marks the operation public, ``["name"]`` requires those schemes."""
 
     summary: str | None = None
     request: Model | None = None
     responses: Mapping[int, Model | None] | None = None
+    security: Sequence[str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ResourceDescription:
-    """A resource's operations, one per HTTP method it handles."""
+    """A resource's per-method declarations (bodies + summaries). Methods absent
+    here but present in ``ALLOWED_METHODS`` are still documented (auto-errors
+    only)."""
 
     get: Operation | None = None
     post: Operation | None = None
@@ -48,16 +70,44 @@ class ResourceDescription:
     patch: Operation | None = None
     delete: Operation | None = None
 
-    def operations(self) -> list[tuple[str, Operation]]:
-        pairs: list[tuple[str, Operation]] = []
-        for method in ("get", "post", "put", "patch", "delete"):
-            op: Operation | None = getattr(self, method)
-            if op is not None:
-                pairs.append((method, op))
-        return pairs
-
 
 _PARAM_RE = re.compile(r"\{([^}:]+)(?::[^}]+)?\}")
+
+
+def _overrides(resource: Resource, name: str) -> bool:
+    return getattr(type(resource), name) is not getattr(Resource, name)
+
+
+def _auto_error_statuses(resource: Resource, method: str) -> set[int]:
+    """The candidate error statuses for ``method``, from overridden callbacks."""
+
+    statuses: set[int] = set()
+    if _overrides(resource, "is_authorized"):
+        statuses.add(401)
+    if _overrides(resource, "forbidden"):
+        statuses.add(403)
+    if method in _EXISTENCE_METHODS and _overrides(resource, "resource_exists"):
+        statuses.add(404)
+    if method in _READ_METHODS:
+        statuses.add(406)  # content negotiation always runs for a representation
+    if method in _BODY_METHODS:
+        if _overrides(resource, "malformed_request"):
+            statuses.add(400)
+        if _overrides(resource, "known_content_type") or _overrides(
+            resource, "content_types_accepted"
+        ):
+            statuses.add(415)
+        if _overrides(resource, "valid_entity_length"):
+            statuses.add(413)
+        if _overrides(resource, "valid_content_headers"):
+            statuses.add(501)
+    if method in _BODY_METHODS and _overrides(resource, "is_conflict"):
+        statuses.add(409)
+    if _overrides(resource, "generate_etag") or _overrides(resource, "last_modified"):
+        statuses.add(412)
+        if method in _READ_METHODS:
+            statuses.add(304)
+    return statuses
 
 
 def _schema_for(model: Model | None) -> dict[str, Any] | None:
@@ -98,25 +148,59 @@ def _parameters(path: str) -> list[dict[str, Any]]:
     ]
 
 
-def _operation(op: Operation, params: list[dict[str, Any]]) -> dict[str, Any]:
+def _security_for(declared: Operation | None) -> list[dict[str, list[str]]] | None:
+    names = declared.security if declared is not None else None
+    if names is None:
+        return None  # inherit the document-level default (omit from the operation)
+    return [{name: []} for name in names]
+
+
+def _operation(
+    method: str,
+    declared: Operation | None,
+    resource: Resource,
+    params: list[dict[str, Any]],
+) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    if op.summary is not None:
-        result["summary"] = op.summary
+    if declared is not None and declared.summary is not None:
+        result["summary"] = declared.summary
     if params:
         result["parameters"] = params
-    if op.request is not None:
-        result["requestBody"] = {"required": True, **_content(op.request)}
-    responses = op.responses or {}
-    result["responses"] = {
-        str(status): _response(status, model) for status, model in responses.items()
-    }
+    if declared is not None and declared.request is not None:
+        result["requestBody"] = {"required": True, **_content(declared.request)}
+
+    responses: dict[str, Any] = {}
+    declared_responses = (declared.responses if declared is not None else None) or {}
+    for status, model in declared_responses.items():
+        responses[str(status)] = _response(status, model)
+    for status in sorted(_auto_error_statuses(resource, method.upper())):
+        responses.setdefault(str(status), _response(status, None))
+    if not responses:
+        # A method in ALLOWED_METHODS with nothing declared or derived: keep the
+        # document valid (OpenAPI requires a non-empty responses object).
+        responses["default"] = {"description": ""}
+    result["responses"] = responses
+
+    security = _security_for(declared)
+    if security is not None:
+        result["security"] = security
     return result
 
 
 def generate_openapi(
-    *, title: str, version: str, routes: Sequence[tuple[str, Resource]]
+    *,
+    title: str,
+    version: str,
+    routes: Sequence[tuple[str, Resource]],
+    security_schemes: Mapping[str, dict[str, Any]] | None = None,
+    security: Sequence[str] | None = None,
 ) -> dict[str, Any]:
-    """Emit an OpenAPI 3.1 document for the resources that declare a ``describe()``."""
+    """Emit an OpenAPI 3.1 document for the resources that declare a ``describe()``.
+
+    ``security_schemes`` populates ``components.securitySchemes``; ``security`` is
+    the document-level default requirement (scheme names), overridable per
+    operation via ``Operation.security``.
+    """
 
     paths: dict[str, Any] = {}
     for path, resource in routes:
@@ -124,13 +208,30 @@ def generate_openapi(
         if description is None:
             continue
         params = _parameters(path)
-        path_item = {
-            method: _operation(op, params) for method, op in description.operations()
+        declared_ops: dict[str, Operation | None] = {
+            "get": description.get,
+            "post": description.post,
+            "put": description.put,
+            "patch": description.patch,
+            "delete": description.delete,
         }
+        path_item: dict[str, Any] = {}
+        for method in _DOCUMENTABLE:
+            if method.upper() not in resource.ALLOWED_METHODS:
+                continue
+            path_item[method] = _operation(
+                method, declared_ops[method], resource, params
+            )
         if path_item:
             paths[path] = path_item
-    return {
+
+    document: dict[str, Any] = {
         "openapi": "3.1.0",
         "info": {"title": title, "version": version},
         "paths": paths,
     }
+    if security is not None:
+        document["security"] = [{name: []} for name in security]
+    if security_schemes is not None:
+        document["components"] = {"securitySchemes": dict(security_schemes)}
+    return document

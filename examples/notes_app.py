@@ -132,6 +132,7 @@ class HealthResource(Resource):
                         "properties": {"status": {"type": "string"}},
                     }
                 },
+                security=[],  # public
             ),
         )
 
@@ -257,13 +258,15 @@ class NoteMember(Resource):
 
     def describe(self) -> ResourceDescription:
         return ResourceDescription(
-            get=Operation(summary="Read a note", responses={200: _NOTE, 404: None}),
+            # Declare only the success bodies; 401/403/404/406/304/412/415 are
+            # auto-derived from the overridden callbacks.
+            get=Operation(summary="Read a note", responses={200: _NOTE}),
             put=Operation(
                 summary="Create or update a note",
                 request=_NOTE_INPUT,
-                responses={201: None, 204: None, 403: None},
+                responses={201: None, 204: None},
             ),
-            delete=Operation(summary="Delete a note", responses={204: None, 403: None}),
+            delete=Operation(summary="Delete a note", responses={204: None}),
         )
 
 
@@ -311,7 +314,13 @@ class OpenApiCommand(Command):
 
     async def handle(self, request: HttpRequest) -> HttpResponse:
         return json_response(
-            generate_openapi(title="Notes API", version="1.0.0", routes=self._routes)
+            generate_openapi(
+                title="Notes API",
+                version="1.0.0",
+                routes=self._routes,
+                security_schemes={"bearerAuth": {"type": "http", "scheme": "bearer"}},
+                security=["bearerAuth"],  # default: bearer token required
+            )
         )
 
 
