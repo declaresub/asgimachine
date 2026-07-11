@@ -8,10 +8,31 @@ reads from, and an :class:`HttpResponse` value object it returns. See PLAN.md
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Protocol, runtime_checkable
+
+
+def serialize(value: object) -> bytes:
+    """Turn a value into response bytes (PLAN.md §6), shared by both lanes.
+
+    ``None`` -> empty; bytes/str pass through; objects with ``model_dump_json``
+    (Pydantic) use it (no hard dependency); everything else via ``json.dumps``.
+    """
+
+    if value is None:
+        return b""
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        return value.encode()
+    model_dump_json = getattr(value, "model_dump_json", None)
+    if callable(model_dump_json):
+        result = model_dump_json()  # Pydantic returns str
+        return result.encode() if isinstance(result, str) else str(result).encode()
+    return json.dumps(value).encode()
 
 
 class Status(IntEnum):
@@ -57,6 +78,9 @@ class HttpRequest(Protocol):
 
     @property
     def headers(self) -> Mapping[str, str]: ...
+
+    @property
+    def path_params(self) -> Mapping[str, str]: ...
 
     async def body(self) -> bytes: ...
 

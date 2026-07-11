@@ -9,10 +9,9 @@ decides; any node may raise :class:`HaltResponse` to short-circuit.
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 from .conditional import (
     http_date,
@@ -20,7 +19,7 @@ from .conditional import (
     if_none_match_matches,
     not_modified_since,
 )
-from .http import HaltResponse, HttpResponse, Status
+from .http import HaltResponse, HttpResponse, Status, serialize
 from .negotiation import choose_media_type, parse_content_type
 from .resource import Ctx
 from .trace import TRACE_HEADER
@@ -368,24 +367,4 @@ def _body(value: object, *, head: bool) -> bytes | AsyncIterator[bytes]:
         return b""
     if isinstance(value, AsyncIterator):
         return cast("AsyncIterator[bytes]", value)
-    return _serialize(value)
-
-
-def _serialize(value: Any) -> bytes:
-    """Turn a producer's return value into bytes (PLAN.md §6).
-
-    bytes/str pass through; Pydantic models via ``model_dump_json`` (no hard
-    dependency on Pydantic in the core); everything else via ``json.dumps``.
-    """
-
-    if value is None:
-        return b""
-    if isinstance(value, bytes):
-        return value
-    if isinstance(value, str):
-        return value.encode()
-    model_dump_json = getattr(value, "model_dump_json", None)
-    if callable(model_dump_json):
-        result = model_dump_json()  # Pydantic returns str
-        return result.encode() if isinstance(result, str) else str(result).encode()
-    return json.dumps(value).encode()
+    return serialize(value)

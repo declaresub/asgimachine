@@ -7,21 +7,32 @@ Starlette; the substrate adapter is imported explicitly from
 
 from __future__ import annotations
 
+from .command import Command, json_response
 from .core import run
-from .http import HaltResponse, HttpRequest, HttpResponse, Status
-from .resource import Ctx, Producer, Resource
+from .http import HaltResponse, HttpRequest, HttpResponse, Status, serialize
+from .policy import Decision, Effect, NamedRule, Policy, RuleEngine
+from .resource import Acceptor, Ctx, Producer, Resource
 from .trace import TRACE_HEADER, Trace, TraceEntry
 
 __all__ = [
     "TRACE_HEADER",
+    "Acceptor",
+    "Command",
     "Ctx",
+    "Decision",
+    "Effect",
     "HaltResponse",
     "HttpRequest",
     "HttpResponse",
+    "NamedRule",
+    "Policy",
     "Producer",
     "Resource",
+    "RuleEngine",
     "Status",
     "Trace",
     "TraceEntry",
+    "json_response",
     "run",
+    "serialize",
 ]

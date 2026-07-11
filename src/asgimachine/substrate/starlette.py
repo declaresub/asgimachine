@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from starlette.routing import BaseRoute
     from starlette.types import Receive, Scope, Send
 
+    from ..command import Command
     from ..resource import Resource
 
 
@@ -48,6 +49,10 @@ class _StarletteRequest:
     def headers(self) -> Mapping[str, str]:
         # Starlette's Headers is case-insensitive, satisfying the protocol.
         return self._request.headers
+
+    @property
+    def path_params(self) -> Mapping[str, str]:
+        return self._request.path_params
 
     async def body(self) -> bytes:
         return await self._request.body()
@@ -90,6 +95,23 @@ def resource_route(path: str, resource: Resource) -> Route:
     """Build a Starlette ``Route`` that runs ``resource`` through the graph."""
 
     return Route(path, _ResourceEndpoint(resource), name=type(resource).__name__)
+
+
+def command_route(
+    path: str, command: Command, *, methods: Sequence[str] = ("POST",)
+) -> Route:
+    """Build a ``Route`` for a command (plain-handler lane, §2.5).
+
+    Unlike a resource, a command does not walk the graph, so the router owns
+    method restriction here (405 for an unlisted method) — that's fine for a
+    command-shaped endpoint.
+    """
+
+    async def endpoint(request: Request) -> Response:
+        return _to_starlette(await command.handle(_StarletteRequest(request)))
+
+    endpoint.__name__ = type(command).__name__
+    return Route(path, endpoint, methods=list(methods))
 
 
 def build_app(
