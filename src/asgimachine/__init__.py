@@ -12,6 +12,7 @@ from .core import run
 from .http import HaltResponse, HttpRequest, HttpResponse, Status, serialize
 from .policy import Decision, Effect, NamedRule, Policy, RuleEngine
 from .resource import Acceptor, Ctx, Producer, Resource
+from .schema import Operation, ResourceDescription, generate_openapi
 from .trace import TRACE_HEADER, Trace, TraceEntry
 
 __all__ = [
@@ -25,13 +26,16 @@ __all__ = [
     "HttpRequest",
     "HttpResponse",
     "NamedRule",
+    "Operation",
     "Policy",
     "Producer",
     "Resource",
+    "ResourceDescription",
     "RuleEngine",
     "Status",
     "Trace",
     "TraceEntry",
+    "generate_openapi",
     "json_response",
     "run",
     "serialize",

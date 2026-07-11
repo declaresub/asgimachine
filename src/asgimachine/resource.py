@@ -20,6 +20,7 @@ from .trace import Trace
 
 if TYPE_CHECKING:
     from .http import HttpRequest
+    from .schema import ResourceDescription
 
 # A producer turns the resolved context into a representation value (§6). The
 # core serializes its return: bytes/str pass through, Pydantic models via
@@ -186,4 +187,10 @@ class Resource:
         return None
 
     async def moved_temporarily(self, ctx: Ctx) -> str | None:  # L5 -> 307
+        return None
+
+    # --- schema (§10) ------------------------------------------------------
+    def describe(self) -> ResourceDescription | None:
+        # Opt in to OpenAPI generation by returning a ResourceDescription.
+        # None (the default) leaves this route out of any generated schema.
         return None

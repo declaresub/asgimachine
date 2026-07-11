@@ -25,7 +25,23 @@ from asgimachine.command import Command, json_response
 from asgimachine.http import HttpRequest, HttpResponse, Status
 from asgimachine.policy import Effect, NamedRule, RuleEngine
 from asgimachine.resource import Ctx, Resource
+from asgimachine.schema import Operation, ResourceDescription, generate_openapi
 from asgimachine.substrate.starlette import build_app, command_route, resource_route
+
+# Reusable JSON Schemas for the note payloads (raw dicts — Pydantic optional).
+_NOTE_INPUT = {
+    "type": "object",
+    "required": ["text"],
+    "properties": {"text": {"type": "string"}},
+}
+_NOTE = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "owner": {"type": "string"},
+        "text": {"type": "string"},
+    },
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +123,19 @@ class HealthResource(Resource):
     async def to_json(self, ctx: Ctx) -> object:
         return {"status": "ok"}
 
+    def describe(self) -> ResourceDescription:
+        return ResourceDescription(
+            get=Operation(
+                summary="Service health",
+                responses={
+                    200: {
+                        "type": "object",
+                        "properties": {"status": {"type": "string"}},
+                    }
+                },
+            ),
+        )
+
 
 class NotesCollection(Resource):
     """Collection: any authenticated user may list or create."""
@@ -155,6 +184,16 @@ class NotesCollection(Resource):
     async def to_json(self, ctx: Ctx) -> object:
         mine = [n for n in self._store.notes.values() if n.owner == ctx.user.username]
         return {"notes": [{"id": n.id, "text": n.text} for n in mine]}
+
+    def describe(self) -> ResourceDescription:
+        return ResourceDescription(
+            get=Operation(
+                summary="List your notes", responses={200: {"type": "object"}}
+            ),
+            post=Operation(
+                summary="Create a note", request=_NOTE_INPUT, responses={201: None}
+            ),
+        )
 
 
 class NoteMember(Resource):
@@ -219,6 +258,17 @@ class NoteMember(Resource):
         note: Note = ctx.entity
         return {"id": note.id, "owner": note.owner, "text": note.text}
 
+    def describe(self) -> ResourceDescription:
+        return ResourceDescription(
+            get=Operation(summary="Read a note", responses={200: _NOTE, 404: None}),
+            put=Operation(
+                summary="Create or update a note",
+                request=_NOTE_INPUT,
+                responses={201: None, 204: None, 403: None},
+            ),
+            delete=Operation(summary="Delete a note", responses={204: None, 403: None}),
+        )
+
 
 # --- auth policy: ordered Allow/Deny rules (§7) -----------------------------
 
@@ -256,18 +306,32 @@ def seed_store() -> Store:
     return Store(users={"alice": ("pw-alice", "user"), "admin": ("pw-admin", "admin")})
 
 
+class OpenApiCommand(Command):
+    """Serves the app's own OpenAPI document, generated from the resources."""
+
+    def __init__(self, routes: list[tuple[str, Resource]]) -> None:
+        self._routes = routes
+
+    async def handle(self, request: HttpRequest) -> HttpResponse:
+        return json_response(
+            generate_openapi(title="Notes API", version="1.0.0", routes=self._routes)
+        )
+
+
 def make_app(store: Store | None = None, *, debug: bool = False) -> Starlette:
     store = store if store is not None else seed_store()
     policy = build_policy()
-    return build_app(
-        [
-            resource_route("/health", HealthResource()),
-            command_route("/token", TokenCommand(store)),
-            resource_route("/notes", NotesCollection(store)),
-            resource_route("/notes/{id}", NoteMember(store, policy)),
-        ],
-        debug=debug,
+    resource_pairs: list[tuple[str, Resource]] = [
+        ("/health", HealthResource()),
+        ("/notes", NotesCollection(store)),
+        ("/notes/{id}", NoteMember(store, policy)),
+    ]
+    routes = [resource_route(path, resource) for path, resource in resource_pairs]
+    routes.append(command_route("/token", TokenCommand(store)))
+    routes.append(
+        command_route("/openapi.json", OpenApiCommand(resource_pairs), methods=["GET"])
     )
+    return build_app(routes, debug=debug)
 
 
 app = make_app(debug=True)

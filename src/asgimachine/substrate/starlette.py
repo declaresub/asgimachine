@@ -115,7 +115,7 @@ def command_route(
 
 
 def build_app(
-    routes: list[BaseRoute],
+    routes: Sequence[BaseRoute],
     *,
     debug: bool = False,
     middleware: Sequence[Middleware] | None = None,
