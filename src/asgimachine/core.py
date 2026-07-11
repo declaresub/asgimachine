@@ -114,6 +114,11 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
         raise _halt(ctx, "G7", Status.NOT_FOUND)
     ctx.trace.record("G7", True)
 
+    # Vary: the resource's declared variances, plus Accept whenever more than one
+    # media type is offered (this response was content-negotiated). Emitted on
+    # cacheable responses (200 and 304) so intermediaries key correctly.
+    vary_headers = await _vary_headers(resource, ctx, offered)
+
     # Conditional GET (G8-L17 subset): compute validators once, reuse for both
     # the precondition check and the final response headers.
     etag = await resource.generate_etag(ctx)
@@ -130,7 +135,8 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
             ctx.trace.record("K13", Status.NOT_MODIFIED)
             raise HaltResponse(
                 HttpResponse(
-                    status=int(Status.NOT_MODIFIED), headers=validator_headers
+                    status=int(Status.NOT_MODIFIED),
+                    headers={**validator_headers, **vary_headers},
                 ),
             )
         ims = request.headers.get("if-modified-since")
@@ -139,16 +145,28 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
             ctx.trace.record("L17", Status.NOT_MODIFIED)
             raise HaltResponse(
                 HttpResponse(
-                    status=int(Status.NOT_MODIFIED), headers=validator_headers
+                    status=int(Status.NOT_MODIFIED),
+                    headers={**validator_headers, **vary_headers},
                 ),
             )
 
     # O18 build representation (HEAD suppresses the body).
     value = await producer(ctx)
     body = b"" if method == "HEAD" else _serialize(value)
-    headers = {"Content-Type": chosen, **validator_headers}
+    headers = {"Content-Type": chosen, **validator_headers, **vary_headers}
     ctx.trace.record("O18", int(Status.OK))
     return HttpResponse(status=int(Status.OK), headers=headers, body=body)
+
+
+async def _vary_headers(
+    resource: Resource, ctx: Ctx, offered: list[str]
+) -> dict[str, str]:
+    """Build the ``Vary`` header from resource variances + Accept-negotiation."""
+
+    names = list(await resource.variances(ctx))
+    if len(offered) > 1 and "Accept" not in names:
+        names.insert(0, "Accept")
+    return {"Vary": ", ".join(names)} if names else {}
 
 
 def _serialize(value: Any) -> bytes:

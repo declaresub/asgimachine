@@ -84,6 +84,12 @@ class Resource:
     async def content_types_provided(self, ctx: Ctx) -> Sequence[tuple[str, Producer]]:
         return [("application/json", self.to_json)]
 
+    async def variances(self, ctx: Ctx) -> Sequence[str]:
+        # Extra request-header names this representation varies on, emitted in
+        # Vary. The core adds "Accept" automatically when more than one media
+        # type is offered, so only list additional axes (e.g. an auth header).
+        return []
+
     async def to_json(self, ctx: Ctx) -> Any:
         # The default JSON producer. Read resources override this (or
         # content_types_provided) to build their representation.

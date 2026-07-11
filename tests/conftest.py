@@ -31,6 +31,7 @@ class Toggles:
     etag: str | None = FIXED_ETAG
     last_modified: datetime | None = FIXED_LAST_MODIFIED
     offered: list[str] = field(default_factory=lambda: ["application/json"])
+    variances: list[str] = field(default_factory=list)
 
 
 class ConfigurableResource(Resource):
@@ -60,6 +61,9 @@ class ConfigurableResource(Resource):
 
     async def content_types_provided(self, ctx: Ctx):
         return [(mtype, self.to_json) for mtype in self._t.offered]
+
+    async def variances(self, ctx: Ctx):
+        return self._t.variances
 
     async def to_json(self, ctx: Ctx) -> object:
         return {"ok": True}
