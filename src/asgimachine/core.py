@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
+from .codec import DEFAULT_CODECS
 from .conditional import (
     http_date,
     if_match_matches,
@@ -25,8 +26,9 @@ from .resource import Ctx
 from .trace import TRACE_HEADER
 
 if TYPE_CHECKING:
+    from .codec import Codec
     from .http import HttpRequest
-    from .resource import Acceptor, Producer, Resource
+    from .resource import Acceptor, Resource
 
 SAFE_METHODS = frozenset({"GET", "HEAD"})
 # Methods that carry a request body; the body-validation nodes (B9/B6/B5/B4) are
@@ -35,15 +37,22 @@ BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 
 
 async def run(
-    resource: Resource, request: HttpRequest, *, debug: bool = False
+    resource: Resource,
+    request: HttpRequest,
+    *,
+    debug: bool = False,
+    codecs: dict[str, Codec] | None = None,
 ) -> HttpResponse:
     """Walk the graph for one request and return an HttpResponse value object.
 
     In ``debug`` mode the ordered node path is attached as the
-    ``X-Asgimachine-Trace`` response header on every exit path (§9).
+    ``X-Asgimachine-Trace`` response header on every exit path (§9). ``codecs``
+    is the media-type -> Codec registry (defaults to JSON only).
     """
 
-    ctx = Ctx(request=request)
+    ctx = Ctx(
+        request=request, codecs=codecs if codecs is not None else dict(DEFAULT_CODECS)
+    )
     try:
         response = await _walk(resource, ctx)
     except HaltResponse as halt:
@@ -127,14 +136,12 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
         return HttpResponse(status=int(Status.OK), headers={"Allow": allow})
 
     # C3/C4 Accept -> media type -> 406
-    provided = await resource.content_types_provided(ctx)
-    offered = [mtype for mtype, _ in provided]
+    offered = list(resource.PRODUCES)
     chosen = choose_media_type(request.headers.get("accept"), offered)
     if chosen is None:
         raise _halt(ctx, "C4", Status.NOT_ACCEPTABLE)
     ctx.chosen_media_type = chosen
     ctx.trace.record("C4", chosen)
-    producer: Producer = dict(provided)[chosen]
 
     # G7 resource_exists? -> the missing-resource branch (create / redirect / 404)
     if not await resource.resource_exists(ctx):
@@ -169,15 +176,15 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
     # Method dispatch (M/N/O). GET/HEAD build a representation; write methods run
     # their processing nodes.
     if method in SAFE_METHODS:
-        # O18 build representation (HEAD suppresses the body). A producer that
-        # returns an async iterator streams (§8).
-        value = await producer(ctx)
+        # O18 build the representation and encode it via the negotiated codec
+        # (HEAD suppresses the body; an async iterator streams — §8).
+        value = await resource.represent(ctx)
         headers = {"Content-Type": chosen, **cacheable_headers}
         ctx.trace.record("O18", int(Status.OK))
         return HttpResponse(
             status=int(Status.OK),
             headers=headers,
-            body=_body(value, head=method == "HEAD"),
+            body=_body(value, head=method == "HEAD", ctx=ctx),
         )
 
     if method == "DELETE":
@@ -221,7 +228,7 @@ def _finish(
     return HttpResponse(
         status=int(status),
         headers={"Content-Type": chosen, **headers},
-        body=_body(value, head=False),
+        body=_body(value, head=False, ctx=ctx),
     )
 
 
@@ -372,15 +379,16 @@ async def _cache_headers(resource: Resource, ctx: Ctx) -> dict[str, str]:
     return result
 
 
-def _body(value: object, *, head: bool) -> bytes | AsyncIterator[bytes]:
-    """Turn a producer/acceptor return into a response body.
+def _body(value: object, *, head: bool, ctx: Ctx) -> bytes | AsyncIterator[bytes]:
+    """Turn a represent()/apply() return into a response body.
 
     HEAD suppresses it; an async iterator streams untouched (§8); anything else
-    is serialized to bytes.
+    is encoded by the negotiated codec (falling back to JSON serialization).
     """
 
     if head:
         return b""
     if isinstance(value, AsyncIterator):
         return cast("AsyncIterator[bytes]", value)
-    return serialize(value)
+    codec = ctx.codecs.get(ctx.chosen_media_type or "")
+    return codec.encode(value) if codec is not None else serialize(value)

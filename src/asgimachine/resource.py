@@ -19,12 +19,11 @@ from .negotiation import parse_content_type
 from .trace import Trace
 
 if TYPE_CHECKING:
+    from .codec import Codec
     from .http import HttpRequest
     from .schema import ResourceDescription
 
-# A producer turns the resolved context into a representation value (§6). The
-# core serializes its return: bytes/str pass through, Pydantic models via
-# ``model_dump_json``, everything else via ``json.dumps``.
+# A producer turns the resolved context into a representation value (§6).
 Producer = Callable[["Ctx"], Awaitable[Any]]
 
 # An acceptor consumes the request body (parse + apply the write) for one request
@@ -51,6 +50,8 @@ class Ctx:
     # The acceptor selected for a write request's Content-Type (set at B5).
     acceptor: Acceptor | None = None
     extra: dict[str, Any] = field(default_factory=dict[str, Any])
+    # Framework config: the media-type -> Codec registry for this request.
+    codecs: dict[str, Codec] = field(default_factory=dict[str, "Codec"])
 
 
 class Resource:
@@ -101,23 +102,24 @@ class Resource:
         # for an archived, immutable feed page.
         return None
 
-    # --- C3/C4: content negotiation ---------------------------------------
-    async def content_types_provided(self, ctx: Ctx) -> Sequence[tuple[str, Producer]]:
-        return [("application/json", self.to_json)]
+    # C3/C4 content negotiation. PRODUCES lists the offered media types in
+    # preference order (declared-first wins ties); a codec encodes the single
+    # representation built by represent(). Set on the class or per-instance.
+    PRODUCES: tuple[str, ...] = ("application/json",)
+
+    async def represent(self, ctx: Ctx) -> Any:
+        # The representation value (a domain model / dict / etc.), encoded by the
+        # negotiated codec. The typed return is the response model for schema.
+        raise NotImplementedError(
+            f"{type(self).__name__} offers {self.PRODUCES} but does not "
+            "implement represent().",
+        )
 
     async def variances(self, ctx: Ctx) -> Sequence[str]:
         # Extra request-header names this representation varies on, emitted in
         # Vary. The core adds "Accept" automatically when more than one media
         # type is offered, so only list additional axes (e.g. an auth header).
         return []
-
-    async def to_json(self, ctx: Ctx) -> Any:
-        # The default JSON producer. Read resources override this (or
-        # content_types_provided) to build their representation.
-        raise NotImplementedError(
-            f"{type(self).__name__} provides application/json but does not "
-            "implement to_json() (or override content_types_provided).",
-        )
 
     # --- write path (§4 v2) -----------------------------------------------
     # Body-validation nodes. Traversed only for body-bearing methods

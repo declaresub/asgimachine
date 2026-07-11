@@ -23,14 +23,12 @@ class StreamResource(Resource):
         self._authorized = authorized
 
     ALLOWED_METHODS = frozenset({"GET"})
+    PRODUCES = ("text/event-stream",)
 
     async def is_authorized(self, ctx: Ctx) -> bool | str:
         return True if self._authorized else "Bearer"
 
-    async def content_types_provided(self, ctx: Ctx):
-        return [("text/event-stream", self.to_events)]
-
-    async def to_events(self, ctx: Ctx) -> AsyncIterator[bytes]:
+    async def represent(self, ctx: Ctx) -> AsyncIterator[bytes]:
         return guard_sse(self._events())
 
     async def _events(self) -> AsyncIterator[bytes]:

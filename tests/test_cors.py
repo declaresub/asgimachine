@@ -21,7 +21,7 @@ class _Guarded(Resource):
     async def is_authorized(self, ctx: Ctx) -> bool | str:
         return "Bearer"  # the graph would 401 anything that reaches it
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {"ok": True}
 
 

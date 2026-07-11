@@ -25,6 +25,7 @@ class EventsResource(Resource):
     """POST a small JSON command, receive a server-sent event stream."""
 
     ALLOWED_METHODS = frozenset({"POST"})
+    PRODUCES = ("text/event-stream",)  # negotiation to SSE is part of the envelope
 
     async def is_authorized(self, ctx: Ctx) -> bool | str:
         auth = ctx.request.headers.get("authorization", "")
@@ -40,15 +41,11 @@ class EventsResource(Resource):
             return True
         return not isinstance(ctx.extra["command"], dict)
 
-    async def content_types_provided(self, ctx: Ctx):
-        # Negotiation to text/event-stream is part of the envelope (406 otherwise).
-        return [("text/event-stream", self.to_events)]
-
     async def process_post(self, ctx: Ctx) -> AsyncIterator[bytes]:
         # The graph has finished the envelope; hand off the untouched generator.
         return guard_sse(self._events(ctx))
 
-    async def to_events(self, ctx: Ctx) -> AsyncIterator[bytes]:
+    async def represent(self, ctx: Ctx) -> AsyncIterator[bytes]:
         return guard_sse(self._events(ctx))
 
     async def _events(self, ctx: Ctx) -> AsyncIterator[bytes]:

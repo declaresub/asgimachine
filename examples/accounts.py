@@ -58,7 +58,7 @@ class AccountsResource(Resource):
     async def generate_etag(self, ctx: Ctx) -> str | None:
         return f'W/"accounts-{ctx.user.id}-{len(ctx.entity)}"'
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {"data": [asdict(account) for account in ctx.entity]}
 
 

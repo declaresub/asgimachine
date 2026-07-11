@@ -25,12 +25,12 @@ class WidgetResource(Resource):
             get=Operation(summary="Get a widget", responses={200: Widget}),
         )
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {}
 
 
 class UndocumentedResource(Resource):
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {}
 
 
@@ -115,7 +115,7 @@ class GuardedResource(Resource):
     async def _accept(self, ctx: Ctx) -> None:
         return None
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {}
 
     def describe(self) -> ResourceDescription:
@@ -173,7 +173,7 @@ class PartialResource(Resource):
     async def delete_resource(self, ctx: Ctx) -> bool:
         return True
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {}
 
     def describe(self) -> ResourceDescription:
@@ -205,7 +205,7 @@ class StrictWriteResource(Resource):
     async def _accept(self, ctx: Ctx) -> None:
         return None
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {}
 
     def describe(self) -> ResourceDescription:
@@ -247,7 +247,7 @@ def test_public_operation_overrides_security() -> None:
         def describe(self) -> ResourceDescription:
             return ResourceDescription(get=Operation(security=[]))
 
-        async def to_json(self, ctx: Ctx) -> object:
+        async def represent(self, ctx: Ctx) -> object:
             return {}
 
     doc = generate_openapi(

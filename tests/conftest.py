@@ -37,8 +37,9 @@ class Toggles:
 class ConfigurableResource(Resource):
     def __init__(self, toggles: Toggles) -> None:
         self._t = toggles
-        # Per-instance method surface, configured at construction.
+        # Per-instance shape, configured at construction.
         self.ALLOWED_METHODS = frozenset(toggles.methods)
+        self.PRODUCES = tuple(toggles.offered)
 
     async def service_available(self, ctx: Ctx) -> bool:
         return self._t.available
@@ -58,13 +59,10 @@ class ConfigurableResource(Resource):
     async def last_modified(self, ctx: Ctx) -> datetime | None:
         return self._t.last_modified
 
-    async def content_types_provided(self, ctx: Ctx):
-        return [(mtype, self.to_json) for mtype in self._t.offered]
-
     async def variances(self, ctx: Ctx):
         return self._t.variances
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {"ok": True}
 
 

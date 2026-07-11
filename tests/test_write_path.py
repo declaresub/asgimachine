@@ -70,7 +70,7 @@ class NotesResource(Resource):
     async def delete_resource(self, ctx: Ctx) -> bool:
         return self._delete_ok
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {"notes": self._store}
 
 

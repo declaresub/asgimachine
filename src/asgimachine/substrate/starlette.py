@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from starlette.routing import BaseRoute
     from starlette.types import Receive, Scope, Send
 
+    from ..codec import Codec
     from ..command import Command
     from ..resource import Resource
 
@@ -78,23 +79,36 @@ class _ResourceEndpoint:
     ``methods=["GET"]``.
     """
 
-    __slots__ = ("_resource",)
+    __slots__ = ("_codecs", "_resource")
 
-    def __init__(self, resource: Resource) -> None:
+    def __init__(self, resource: Resource, codecs: dict[str, Codec] | None) -> None:
         self._resource = resource
+        self._codecs = codecs
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         request = Request(scope, receive)
         # Tie the decision-trace header to Starlette's own debug flag.
         debug = bool(getattr(scope.get("app"), "debug", False))
-        response = await run(self._resource, _StarletteRequest(request), debug=debug)
+        response = await run(
+            self._resource,
+            _StarletteRequest(request),
+            debug=debug,
+            codecs=self._codecs,
+        )
         await _to_starlette(response)(scope, receive, send)
 
 
-def resource_route(path: str, resource: Resource) -> Route:
-    """Build a Starlette ``Route`` that runs ``resource`` through the graph."""
+def resource_route(
+    path: str, resource: Resource, *, codecs: dict[str, Codec] | None = None
+) -> Route:
+    """Build a Starlette ``Route`` that runs ``resource`` through the graph.
 
-    return Route(path, _ResourceEndpoint(resource), name=type(resource).__name__)
+    ``codecs`` injects a media-type -> Codec registry (default: JSON only).
+    """
+
+    return Route(
+        path, _ResourceEndpoint(resource, codecs), name=type(resource).__name__
+    )
 
 
 def command_route(

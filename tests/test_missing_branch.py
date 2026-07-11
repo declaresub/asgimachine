@@ -56,7 +56,7 @@ class MissingResource(Resource):
     async def moved_temporarily(self, ctx: Ctx) -> str | None:
         return self._moved_temp
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {}
 
 

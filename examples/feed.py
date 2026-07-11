@@ -70,7 +70,7 @@ class FeedResource(Resource):
     async def cache_control(self, ctx: Ctx) -> str | None:
         return IMMUTABLE if self._archived(ctx) else "no-cache"
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {
             "page": ctx.extra["page"],
             "archived": self._archived(ctx),

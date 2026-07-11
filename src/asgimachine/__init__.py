@@ -7,6 +7,7 @@ Starlette; the substrate adapter is imported explicitly from
 
 from __future__ import annotations
 
+from .codec import DEFAULT_CODECS, Codec, JsonCodec
 from .command import Command, json_response
 from .core import run
 from .http import HaltResponse, HttpRequest, HttpResponse, Status, serialize
@@ -16,8 +17,10 @@ from .schema import Operation, ResourceDescription, generate_openapi
 from .trace import TRACE_HEADER, Trace, TraceEntry
 
 __all__ = [
+    "DEFAULT_CODECS",
     "TRACE_HEADER",
     "Acceptor",
+    "Codec",
     "Command",
     "Ctx",
     "Decision",
@@ -25,6 +28,7 @@ __all__ = [
     "HaltResponse",
     "HttpRequest",
     "HttpResponse",
+    "JsonCodec",
     "NamedRule",
     "Operation",
     "Policy",

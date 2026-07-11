@@ -63,7 +63,7 @@ class WriteResource(Resource):
     async def _accept(self, ctx: Ctx) -> None:
         return None
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {}
 
 

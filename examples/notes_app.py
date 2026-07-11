@@ -119,7 +119,7 @@ class HealthResource(Resource):
 
     ALLOWED_METHODS = frozenset({"GET", "HEAD"})
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         return {"status": "ok"}
 
     def describe(self) -> ResourceDescription:
@@ -180,7 +180,7 @@ class NotesCollection(Resource):
         )
         return None
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         mine = [n for n in self._store.notes.values() if n.owner == ctx.user.username]
         return {"notes": [{"id": n.id, "text": n.text} for n in mine]}
 
@@ -252,7 +252,7 @@ class NoteMember(Resource):
         del self._store.notes[ctx.entity.id]
         return True
 
-    async def to_json(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: Ctx) -> object:
         note: Note = ctx.entity
         return {"id": note.id, "owner": note.owner, "text": note.text}
 
