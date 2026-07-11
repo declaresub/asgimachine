@@ -107,6 +107,17 @@ class Resource:
         )
 
     # --- write path (§4 v2) -----------------------------------------------
+    # Body-validation nodes. Traversed only for body-bearing methods
+    # (POST/PUT/PATCH); each ships a correct default that passes.
+    async def malformed_request(self, ctx: Ctx) -> bool:  # B9 -> 400
+        return False
+
+    async def valid_content_headers(self, ctx: Ctx) -> bool:  # B6 -> 501
+        return True
+
+    async def valid_entity_length(self, ctx: Ctx) -> bool:  # B4 -> 413
+        return True
+
     # Acceptors mirror producers on the write side: each handles one request
     # Content-Type. Empty by default — a read-only resource declares none.
     async def content_types_accepted(self, ctx: Ctx) -> Sequence[tuple[str, Acceptor]]:

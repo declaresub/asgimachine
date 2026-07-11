@@ -1,7 +1,8 @@
-"""Write-path conformance — slice 1 (PLAN.md §4 v2).
+"""Write-path conformance (PLAN.md §4 v2).
 
 Method dispatch (PUT/POST/DELETE) through the graph: acceptors, 201+Location,
-204/200, 409, and 415 on an unmatched request Content-Type.
+204/200, 409, and the body-validation nodes (B9 malformed 400, B6
+valid_content_headers 501, B5 known_content_type 415, B4 valid_entity_length 413).
 """
 
 from __future__ import annotations
@@ -23,14 +24,29 @@ class NotesResource(Resource):
         conflict: bool = False,
         is_create: bool = True,
         delete_ok: bool = True,
+        malformed: bool = False,
+        bad_content_headers: bool = False,
+        too_large: bool = False,
     ) -> None:
         self._store = store
         self._conflict = conflict
         self._is_create = is_create
         self._delete_ok = delete_ok
+        self._malformed = malformed
+        self._bad_content_headers = bad_content_headers
+        self._too_large = too_large
 
     async def allowed_methods(self, ctx: Ctx) -> list[str]:
         return ["GET", "HEAD", "POST", "PUT", "DELETE"]
+
+    async def malformed_request(self, ctx: Ctx) -> bool:
+        return self._malformed
+
+    async def valid_content_headers(self, ctx: Ctx) -> bool:
+        return not self._bad_content_headers
+
+    async def valid_entity_length(self, ctx: Ctx) -> bool:
+        return not self._too_large
 
     async def content_types_accepted(self, ctx: Ctx):
         return [("application/json", self._store_note)]
@@ -71,7 +87,22 @@ def test_put_updates_and_returns_204() -> None:
     assert resp.content == b""
     assert store == {"a": "hello"}
     assert_trace(
-        resp, ["B13", "B12", "B10", "B8", "B7", "B5", "C4", "G7", "O14", "O20"]
+        resp,
+        [
+            "B13",
+            "B12",
+            "B10",
+            "B9",
+            "B8",
+            "B7",
+            "B6",
+            "B5",
+            "B4",
+            "C4",
+            "G7",
+            "O14",
+            "O20",
+        ],
     )
 
 
@@ -80,7 +111,7 @@ def test_put_wrong_content_type_is_415() -> None:
         "/notes", content=b"id=a", headers={"content-type": "text/plain"}
     )
     assert resp.status_code == 415
-    assert_trace(resp, ["B13", "B12", "B10", "B8", "B7", "B5"])
+    assert_trace(resp, ["B13", "B12", "B10", "B9", "B8", "B7", "B6", "B5"])
 
 
 def test_put_conflict_is_409() -> None:
@@ -96,7 +127,22 @@ def test_post_create_returns_201_with_location() -> None:
     assert resp.headers["location"] == "/notes/new"
     assert store == {"b": "world"}
     assert_trace(
-        resp, ["B13", "B12", "B10", "B8", "B7", "B5", "C4", "G7", "N11", "O20"]
+        resp,
+        [
+            "B13",
+            "B12",
+            "B10",
+            "B9",
+            "B8",
+            "B7",
+            "B6",
+            "B5",
+            "B4",
+            "C4",
+            "G7",
+            "N11",
+            "O20",
+        ],
     )
 
 
@@ -115,3 +161,34 @@ def test_delete_returns_204() -> None:
 def test_delete_failure_is_500() -> None:
     resp = _client({}, delete_ok=False).request("DELETE", "/notes")
     assert resp.status_code == 500
+
+
+# --- body-validation nodes (B9/B6/B4) --------------------------------------
+
+
+def test_malformed_request_is_400() -> None:
+    resp = _client({}, malformed=True).put("/notes", json={"id": "a", "content": "x"})
+    assert resp.status_code == 400
+    # B9 short-circuits before auth, per the canonical B-column order.
+    assert_trace(resp, ["B13", "B12", "B10", "B9"])
+
+
+def test_bad_content_headers_is_501() -> None:
+    resp = _client({}, bad_content_headers=True).put(
+        "/notes", json={"id": "a", "content": "x"}
+    )
+    assert resp.status_code == 501
+    assert_trace(resp, ["B13", "B12", "B10", "B9", "B8", "B7", "B6"])
+
+
+def test_entity_too_large_is_413() -> None:
+    resp = _client({}, too_large=True).put("/notes", json={"id": "a", "content": "x"})
+    assert resp.status_code == 413
+    assert_trace(resp, ["B13", "B12", "B10", "B9", "B8", "B7", "B6", "B5", "B4"])
+
+
+def test_bodyless_get_skips_body_validation() -> None:
+    # A GET never traverses B9/B6/B5/B4 (the §2.4 pruning).
+    resp = _client({"a": "x"}).get("/notes")
+    assert resp.status_code == 200
+    assert_trace(resp, ["B13", "B12", "B10", "B8", "B7", "C4", "G7", "O18"])

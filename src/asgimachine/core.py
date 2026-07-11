@@ -84,6 +84,12 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
         raise _halt(ctx, "B10", Status.METHOD_NOT_ALLOWED, {"Allow": allow})
     ctx.trace.record("B10", True)
 
+    # B9 malformed_request? -> 400 (body-bearing methods only).
+    if method in BODY_METHODS:
+        if await resource.malformed_request(ctx):
+            raise _halt(ctx, "B9", Status.BAD_REQUEST)
+        ctx.trace.record("B9", True)
+
     # B8 is_authorized? -> 401 (+ WWW-Authenticate when a challenge is given)
     auth = await resource.is_authorized(ctx)
     if auth is not True:
@@ -96,11 +102,19 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
         raise _halt(ctx, "B7", Status.FORBIDDEN)
     ctx.trace.record("B7", True)
 
-    # B5 known_content_type? -> 415 (body-bearing methods only).
+    # Request-body validation (body-bearing methods only), in canonical order:
+    # B6 valid_content_headers? -> 501, B5 known_content_type? -> 415,
+    # B4 valid_entity_length? -> 413.
     if method in BODY_METHODS:
+        if not await resource.valid_content_headers(ctx):
+            raise _halt(ctx, "B6", Status.NOT_IMPLEMENTED)
+        ctx.trace.record("B6", True)
         if not await resource.known_content_type(ctx):
             raise _halt(ctx, "B5", Status.UNSUPPORTED_MEDIA_TYPE)
         ctx.trace.record("B5", True)
+        if not await resource.valid_entity_length(ctx):
+            raise _halt(ctx, "B4", Status.REQUEST_ENTITY_TOO_LARGE)
+        ctx.trace.record("B4", True)
 
     # B3 OPTIONS? -> 200 with Allow (no body). Canonical order places B3 ahead of
     # content negotiation, so OPTIONS is not subject to Accept (never 406).
