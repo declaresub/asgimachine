@@ -452,6 +452,8 @@ knowledge of, the apps that use it.
   imports from day one, formalize the protocol at M1, build a second substrate
   only on concrete need. The "beat Starlette" question is explicitly *deferred*
   behind the seam and revisited at M5 with real data — not litigated up front.
+  **M5 verdict:** keep Starlette; the seam held (140-LOC adapter, provably
+  Starlette-free core). See [docs/adr/0001-keep-starlette-substrate.md](docs/adr/0001-keep-starlette-substrate.md).
 - **Graph inertness on commands** — accepted: commands use the second lane; don't
   force them through the graph for a dividend that isn't there.
 - **Per-request overhead** — many small awaits per request. Negligible vs. a DB
