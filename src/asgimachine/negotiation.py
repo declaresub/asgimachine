@@ -17,6 +17,19 @@ _MAX_ACCEPT_LEN = 8192
 _MAX_RANGES = 64
 
 
+def parse_content_type(header: str | None) -> str | None:
+    """Extract the lowercased ``type/subtype`` from a Content-Type header.
+
+    Parameters (``; charset=...``) are dropped. Returns ``None`` for a missing or
+    malformed value (no ``/``). Used to match request bodies against acceptors.
+    """
+
+    if not header:
+        return None
+    media = header[:_MAX_ACCEPT_LEN].split(";", 1)[0].strip().lower()
+    return media if "/" in media else None
+
+
 def _clamp_qvalue(value: str) -> float:
     """Parse a qvalue, clamped to [0, 1]. Rejects nan/inf (RFC 9110 §12.4.2)."""
 

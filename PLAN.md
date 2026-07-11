@@ -186,10 +186,15 @@ Full `If-Match`/`If-None-Match`/`If-Modified-Since`/`If-Unmodified-Since`
 types, `Vary` via `variances`, and the trace facility (§9).
 
 ### Phase v2 — write path (POST/PUT/PATCH/DELETE)
+Node labels follow the canonical webmachine v3 flowchart (checked
+content-type-before-entity-length). The body-validation nodes are traversed only
+for body-bearing methods (POST/PUT/PATCH) — a §2.4 pruning matching cowboy_rest;
+bodyless requests fall through the inert branch.
 | Node(s) | Question | Status |
 |---|---|---|
-| B5 | `valid_entity_length?` | 413 |
-| B6 | `known_content_type?` | 415 |
+| B6 | `valid_content_headers?` | 501 |
+| B5 | `known_content_type?` | 415 |
+| B4 | `valid_entity_length?` | 413 |
 | B9 | `malformed_request?` (Pydantic body parse) | 400 |
 | — | `content_types_accepted` (acceptor callbacks) | — |
 | O14/P3 | `is_conflict?` | 409 |

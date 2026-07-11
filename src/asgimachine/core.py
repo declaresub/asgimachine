@@ -14,15 +14,18 @@ from typing import TYPE_CHECKING, Any
 
 from .conditional import http_date, if_none_match_matches, not_modified_since
 from .http import HaltResponse, HttpResponse, Status
-from .negotiation import choose_media_type
+from .negotiation import choose_media_type, parse_content_type
 from .resource import Ctx
 from .trace import TRACE_HEADER
 
 if TYPE_CHECKING:
     from .http import HttpRequest
-    from .resource import Producer, Resource
+    from .resource import Acceptor, Producer, Resource
 
 SAFE_METHODS = frozenset({"GET", "HEAD"})
+# Methods that carry a request body; the body-validation nodes (B9/B6/B5/B4) are
+# traversed only for these (a §2.4 pruning — bodyless requests fall through).
+BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 
 
 async def run(
@@ -93,6 +96,12 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
         raise _halt(ctx, "B7", Status.FORBIDDEN)
     ctx.trace.record("B7", True)
 
+    # B5 known_content_type? -> 415 (body-bearing methods only).
+    if method in BODY_METHODS:
+        if not await resource.known_content_type(ctx):
+            raise _halt(ctx, "B5", Status.UNSUPPORTED_MEDIA_TYPE)
+        ctx.trace.record("B5", True)
+
     # B3 OPTIONS? -> 200 with Allow (no body). Canonical order places B3 ahead of
     # content negotiation, so OPTIONS is not subject to Accept (never 406).
     if method == "OPTIONS":
@@ -150,12 +159,99 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
                 ),
             )
 
-    # O18 build representation (HEAD suppresses the body).
-    value = await producer(ctx)
-    body = b"" if method == "HEAD" else _serialize(value)
-    headers = {"Content-Type": chosen, **validator_headers, **vary_headers}
-    ctx.trace.record("O18", int(Status.OK))
-    return HttpResponse(status=int(Status.OK), headers=headers, body=body)
+    # Method dispatch (M/N/O). GET/HEAD build a representation; write methods run
+    # their processing nodes. (412 preconditions + the G7-false create/redirect
+    # branch arrive in later M2 slices.)
+    if method in SAFE_METHODS:
+        # O18 build representation (HEAD suppresses the body).
+        value = await producer(ctx)
+        body = b"" if method == "HEAD" else _serialize(value)
+        headers = {"Content-Type": chosen, **validator_headers, **vary_headers}
+        ctx.trace.record("O18", int(Status.OK))
+        return HttpResponse(status=int(Status.OK), headers=headers, body=body)
+
+    if method == "DELETE":
+        return await _delete(resource, ctx, vary_headers)
+    if method == "POST":
+        return await _post(resource, ctx, chosen, vary_headers)
+    # PUT / PATCH: update an existing resource.
+    return await _write(resource, ctx, chosen, vary_headers)
+
+
+# --- write path (§4 v2) ----------------------------------------------------
+
+
+async def _select_acceptor(resource: Resource, ctx: Ctx) -> Acceptor | None:
+    media = parse_content_type(ctx.request.headers.get("content-type"))
+    for mtype, acceptor in await resource.content_types_accepted(ctx):
+        if mtype == media:
+            return acceptor
+    return None
+
+
+async def _apply_acceptor(resource: Resource, ctx: Ctx) -> object:
+    """Run the acceptor matching the request Content-Type; 415 if none matches."""
+
+    acceptor = await _select_acceptor(resource, ctx)
+    if acceptor is None:
+        raise _halt(ctx, "B5", Status.UNSUPPORTED_MEDIA_TYPE)
+    return await acceptor(ctx)
+
+
+def _finish(
+    ctx: Ctx, status: Status, value: object, chosen: str, headers: dict[str, str]
+) -> HttpResponse:
+    """O20: a None entity yields 204 (or keeps 201/etc.); a value yields a body."""
+
+    if value is None:
+        final = Status.NO_CONTENT if status is Status.OK else status
+        ctx.trace.record("O20", int(final))
+        return HttpResponse(status=int(final), headers=headers)
+    ctx.trace.record("O20", int(status))
+    return HttpResponse(
+        status=int(status),
+        headers={"Content-Type": chosen, **headers},
+        body=_serialize(value),
+    )
+
+
+async def _delete(
+    resource: Resource, ctx: Ctx, headers: dict[str, str]
+) -> HttpResponse:
+    # M16 DELETE? -> M20 delete_resource.
+    if not await resource.delete_resource(ctx):
+        raise _halt(ctx, "M20", Status.INTERNAL_SERVER_ERROR)
+    completed = await resource.delete_completed(ctx)
+    status = Status.NO_CONTENT if completed else Status.ACCEPTED
+    ctx.trace.record("M20", int(status))
+    return HttpResponse(status=int(status), headers=headers)
+
+
+async def _post(
+    resource: Resource, ctx: Ctx, chosen: str, headers: dict[str, str]
+) -> HttpResponse:
+    # N16 POST? -> N11 post_is_create?
+    if await resource.post_is_create(ctx):
+        ctx.trace.record("N11", True)
+        location = await resource.create_path(ctx)
+        value = await _apply_acceptor(resource, ctx)
+        return _finish(
+            ctx, Status.CREATED, value, chosen, {**headers, "Location": location}
+        )
+    ctx.trace.record("N11", False)
+    value = await resource.process_post(ctx)
+    return _finish(ctx, Status.OK, value, chosen, headers)
+
+
+async def _write(
+    resource: Resource, ctx: Ctx, chosen: str, headers: dict[str, str]
+) -> HttpResponse:
+    # O16 PUT/PATCH -> O14 is_conflict? -> 409, else apply the acceptor.
+    if await resource.is_conflict(ctx):
+        raise _halt(ctx, "O14", Status.CONFLICT)
+    ctx.trace.record("O14", False)
+    value = await _apply_acceptor(resource, ctx)
+    return _finish(ctx, Status.OK, value, chosen, headers)
 
 
 async def _vary_headers(
