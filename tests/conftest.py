@@ -37,12 +37,11 @@ class Toggles:
 class ConfigurableResource(Resource):
     def __init__(self, toggles: Toggles) -> None:
         self._t = toggles
+        # Per-instance method surface, configured at construction.
+        self.ALLOWED_METHODS = frozenset(toggles.methods)
 
     async def service_available(self, ctx: Ctx) -> bool:
         return self._t.available
-
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return self._t.methods
 
     async def is_authorized(self, ctx: Ctx) -> bool | str:
         return self._t.authorized

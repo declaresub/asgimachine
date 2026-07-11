@@ -45,7 +45,7 @@ class Ctx:
     request: HttpRequest
     trace: Trace = field(default_factory=Trace)
     chosen_media_type: str | None = None
-    allowed_methods: list[str] = field(default_factory=list[str])
+    allowed_methods: frozenset[str] = field(default_factory=frozenset[str])
     user: Any = None
     entity: Any = None
     # The acceptor selected for a write request's Content-Type (set at B5).
@@ -60,13 +60,15 @@ class Resource:
         {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
     )
 
+    # B10 -> 405 + Allow. The set of methods this resource supports. Static shape,
+    # not per-request behavior: 405 is a property of the target resource (RFC 9110
+    # §15.5.6), while per-principal gating belongs in `forbidden` (403). Set it on
+    # the class, or per-instance in __init__; the core reads it directly.
+    ALLOWED_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
+
     # --- B13 ---------------------------------------------------------------
     async def service_available(self, ctx: Ctx) -> bool:
         return True
-
-    # --- B10 ---------------------------------------------------------------
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["GET", "HEAD"]
 
     # --- B8 ----------------------------------------------------------------
     async def is_authorized(self, ctx: Ctx) -> bool | str:

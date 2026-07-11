@@ -117,8 +117,7 @@ class TokenCommand(Command):
 class HealthResource(Resource):
     """Public read-only resource — no auth."""
 
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["GET", "HEAD"]
+    ALLOWED_METHODS = frozenset({"GET", "HEAD"})
 
     async def to_json(self, ctx: Ctx) -> object:
         return {"status": "ok"}
@@ -140,11 +139,10 @@ class HealthResource(Resource):
 class NotesCollection(Resource):
     """Collection: any authenticated user may list or create."""
 
+    ALLOWED_METHODS = frozenset({"GET", "HEAD", "POST"})
+
     def __init__(self, store: Store) -> None:
         self._store = store
-
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["GET", "HEAD", "POST"]
 
     async def is_authorized(self, ctx: Ctx) -> bool | str:
         user = self._store.authenticate(ctx.request)
@@ -199,12 +197,11 @@ class NotesCollection(Resource):
 class NoteMember(Resource):
     """Member: read for any authenticated user; write governed by the policy."""
 
+    ALLOWED_METHODS = frozenset({"GET", "HEAD", "PUT", "DELETE"})
+
     def __init__(self, store: Store, policy: RuleEngine) -> None:
         self._store = store
         self._policy = policy
-
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["GET", "HEAD", "PUT", "DELETE"]
 
     async def is_authorized(self, ctx: Ctx) -> bool | str:
         user = self._store.authenticate(ctx.request)

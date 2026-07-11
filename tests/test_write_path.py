@@ -36,8 +36,7 @@ class NotesResource(Resource):
         self._bad_content_headers = bad_content_headers
         self._too_large = too_large
 
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["GET", "HEAD", "POST", "PUT", "DELETE"]
+    ALLOWED_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "DELETE"})
 
     async def malformed_request(self, ctx: Ctx) -> bool:
         return self._malformed

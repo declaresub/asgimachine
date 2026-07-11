@@ -44,11 +44,10 @@ class Outbox:
 
 
 class FeedResource(Resource):
+    ALLOWED_METHODS = frozenset({"GET", "HEAD"})
+
     def __init__(self, outbox: Outbox) -> None:
         self._outbox = outbox
-
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["GET", "HEAD"]
 
     async def resource_exists(self, ctx: Ctx) -> bool:
         page = _parse_page(ctx.request.path_params.get("page"))

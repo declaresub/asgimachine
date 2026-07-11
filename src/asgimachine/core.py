@@ -60,12 +60,10 @@ def _halt(
     return HaltResponse(HttpResponse(status=int(status), headers=headers or {}))
 
 
-def _allow_header(methods: list[str]) -> str:
-    seen: list[str] = []
-    for method in [*methods, "OPTIONS"]:
-        if method not in seen:
-            seen.append(method)
-    return ", ".join(seen)
+def _allow_header(methods: frozenset[str]) -> str:
+    # OPTIONS is always available (answered at B3); sorted for a deterministic
+    # header. Allow has no required order (RFC 9110), so a set is the right shape.
+    return ", ".join(sorted(methods | {"OPTIONS"}))
 
 
 async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
@@ -83,7 +81,7 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
     ctx.trace.record("B12", True)
 
     # B10 method_allowed? -> 405 + Allow
-    allowed = await resource.allowed_methods(ctx)
+    allowed = resource.ALLOWED_METHODS
     ctx.allowed_methods = allowed
     allow = _allow_header(allowed)
     if method not in allowed and method != "OPTIONS":

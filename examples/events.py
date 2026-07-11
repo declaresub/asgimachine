@@ -24,8 +24,7 @@ from asgimachine.substrate.starlette import build_app, resource_route
 class EventsResource(Resource):
     """POST a small JSON command, receive a server-sent event stream."""
 
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["POST"]
+    ALLOWED_METHODS = frozenset({"POST"})
 
     async def is_authorized(self, ctx: Ctx) -> bool | str:
         auth = ctx.request.headers.get("authorization", "")

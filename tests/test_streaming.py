@@ -22,8 +22,7 @@ class StreamResource(Resource):
         self._fail_after = fail_after
         self._authorized = authorized
 
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["GET"]
+    ALLOWED_METHODS = frozenset({"GET"})
 
     async def is_authorized(self, ctx: Ctx) -> bool | str:
         return True if self._authorized else "Bearer"

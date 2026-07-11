@@ -36,14 +36,13 @@ AccountStore = Callable[[str], Awaitable[list[Account]]]
 class AccountsResource(Resource):
     """GET/HEAD the authenticated user's accounts, with conditional GET."""
 
+    ALLOWED_METHODS = frozenset({"GET", "HEAD"})
+
     def __init__(
         self, retrieve_accounts_for_user: AccountStore, authenticate: Authenticator
     ) -> None:
         self._retrieve = retrieve_accounts_for_user
         self._authenticate = authenticate
-
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["GET", "HEAD"]
 
     async def is_authorized(self, ctx: Ctx) -> bool | str:
         user = await self._authenticate(ctx)

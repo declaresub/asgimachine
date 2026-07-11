@@ -28,8 +28,7 @@ class InfiniteStream(Resource):
         self.produced = 0
         self.cleaned_up = False
 
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["GET"]
+    ALLOWED_METHODS = frozenset({"GET"})
 
     async def content_types_provided(self, ctx: Ctx):
         return [("text/event-stream", self.to_events)]

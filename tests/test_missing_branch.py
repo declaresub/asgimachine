@@ -31,8 +31,7 @@ class MissingResource(Resource):
         self._moved_perm = moved_perm
         self._moved_temp = moved_temp
 
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["GET", "PUT", "DELETE"]
+    ALLOWED_METHODS = frozenset({"GET", "PUT", "DELETE"})
 
     async def resource_exists(self, ctx: Ctx) -> bool:
         return False

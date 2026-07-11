@@ -52,8 +52,7 @@ def test_if_unmodified_since_fresh_proceeds(client_for) -> None:
 
 
 class WriteResource(Resource):
-    async def allowed_methods(self, ctx: Ctx) -> list[str]:
-        return ["GET", "PUT"]
+    ALLOWED_METHODS = frozenset({"GET", "PUT"})
 
     async def generate_etag(self, ctx: Ctx) -> str | None:
         return 'W/"w1"'
