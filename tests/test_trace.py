@@ -33,7 +33,7 @@ def test_304_trace_reaches_conditional_node(client_for) -> None:
 def test_404_trace(client_for) -> None:
     resp = client_for(Toggles(exists=False)).get("/r")
     assert resp.status_code == 404
-    assert_trace(resp, ["B13", "B12", "B10", "B8", "B7", "C4", "G7"])
+    assert_trace(resp, ["B13", "B12", "B10", "B8", "B7", "C4", "G7", "K7", "L7"])
 
 
 def test_405_short_circuits_trace(client_for) -> None:

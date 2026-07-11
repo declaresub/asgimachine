@@ -138,9 +138,10 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
     ctx.trace.record("C4", chosen)
     producer: Producer = dict(provided)[chosen]
 
-    # G7 resource_exists? -> 404
+    # G7 resource_exists? -> the missing-resource branch (create / redirect / 404)
     if not await resource.resource_exists(ctx):
-        raise _halt(ctx, "G7", Status.NOT_FOUND)
+        ctx.trace.record("G7", False)
+        return await _handle_missing(resource, ctx, method, chosen)
     ctx.trace.record("G7", True)
 
     # Vary: the resource's declared variances, plus Accept whenever more than one
@@ -255,6 +256,41 @@ async def _write(
     ctx.trace.record("O14", False)
     value = await _apply_acceptor(resource, ctx)
     return _finish(ctx, Status.OK, value, chosen, headers)
+
+
+async def _handle_missing(
+    resource: Resource, ctx: Ctx, method: str, chosen: str
+) -> HttpResponse:
+    """The G7-false branch: create (PUT), redirect/gone (previously_existed), 404."""
+
+    # H7 If-Match on a non-existent resource cannot be satisfied -> 412.
+    if ctx.request.headers.get("if-match") is not None:
+        raise _halt(ctx, "H7", Status.PRECONDITION_FAILED)
+
+    # I7 PUT? -> create at the request URI (P3 is_conflict? -> 409, else 201).
+    if method == "PUT":
+        ctx.trace.record("I7", True)
+        if await resource.is_conflict(ctx):
+            raise _halt(ctx, "P3", Status.CONFLICT)
+        ctx.trace.record("P3", False)
+        value = await _apply_acceptor(resource, ctx)
+        return _finish(ctx, Status.CREATED, value, chosen, {})
+
+    # K7 previously_existed? -> K5 moved_permanently 301 / L5 moved_temporarily
+    # 307 / else 410 Gone.
+    if await resource.previously_existed(ctx):
+        ctx.trace.record("K7", True)
+        moved = await resource.moved_permanently(ctx)
+        if moved is not None:
+            raise _halt(ctx, "K5", Status.MOVED_PERMANENTLY, {"Location": moved})
+        temporary = await resource.moved_temporarily(ctx)
+        if temporary is not None:
+            raise _halt(ctx, "L5", Status.TEMPORARY_REDIRECT, {"Location": temporary})
+        raise _halt(ctx, "M5", Status.GONE)
+    ctx.trace.record("K7", False)
+
+    # L7: no create path applies -> 404.
+    raise _halt(ctx, "L7", Status.NOT_FOUND)
 
 
 def _not_modified(headers: dict[str, str]) -> HaltResponse:

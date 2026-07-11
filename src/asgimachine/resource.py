@@ -166,3 +166,14 @@ class Resource:
             f"{type(self).__name__} handles POST but does not implement "
             "process_post() (or set post_is_create).",
         )
+
+    # --- G7-false branch: the resource does not (currently) exist ----------
+    async def previously_existed(self, ctx: Ctx) -> bool:  # K7
+        # True routes a missing resource to redirect/gone handling.
+        return False
+
+    async def moved_permanently(self, ctx: Ctx) -> str | None:  # K5 -> 301
+        return None
+
+    async def moved_temporarily(self, ctx: Ctx) -> str | None:  # L5 -> 307
+        return None
