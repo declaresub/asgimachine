@@ -15,6 +15,8 @@ cosplay:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import secrets
 from dataclasses import dataclass, field
@@ -63,23 +65,63 @@ class Note:
     version: int = 1
 
 
+# scrypt work factors — demo-appropriate; a production app tunes these upward (or
+# uses argon2/bcrypt). Passwords are hashed, never stored in the clear.
+_SCRYPT = {"n": 2**14, "r": 8, "p": 1}
+
+
+def _hash_password(password: str, salt: bytes) -> bytes:
+    return hashlib.scrypt(password.encode(), salt=salt, **_SCRYPT)
+
+
+@dataclass(frozen=True, slots=True)
+class Credential:
+    salt: bytes
+    pwd_hash: bytes
+    role: str
+
+
+# Verifying against this for an unknown user keeps the work (and timing) the same
+# whether or not the account exists — no username enumeration via a timing oracle.
+_DUMMY = Credential(b"\x00" * 16, _hash_password("", b"\x00" * 16), "")
+
+
 @dataclass(slots=True)
 class Store:
     """In-memory state, wired into resources/commands at the composition root."""
 
-    users: dict[str, tuple[str, str]]  # username -> (password, role)
+    users: dict[str, Credential]  # username -> hashed credential
     tokens: dict[str, str] = field(default_factory=dict[str, str])  # token -> username
     notes: dict[str, Note] = field(default_factory=dict[str, "Note"])
-    _seq: int = 0
+
+    @classmethod
+    def seeded(cls, plaintext: dict[str, tuple[str, str]]) -> Store:
+        """Build a store from ``username -> (password, role)``, hashing each
+        password with a per-user salt at construction."""
+
+        users: dict[str, Credential] = {}
+        for name, (password, role) in plaintext.items():
+            salt = secrets.token_bytes(16)
+            users[name] = Credential(salt, _hash_password(password, salt), role)
+        return cls(users=users)
+
+    def verify_credentials(self, username: str, password: str) -> bool:
+        # Always hash (even for an unknown user, against _DUMMY) and compare in
+        # constant time, so neither the result nor the timing leaks account existence.
+        cred = self.users.get(username, _DUMMY)
+        candidate = _hash_password(password, cred.salt)
+        match = hmac.compare_digest(candidate, cred.pwd_hash)
+        return match and username in self.users
 
     def authenticate(self, request: HttpRequest) -> User | None:
         auth = request.headers.get("authorization", "")
         if not auth.startswith("Bearer "):
             return None
         username = self.tokens.get(auth.removeprefix("Bearer ").strip())
-        if username is None:
+        cred = self.users.get(username) if username is not None else None
+        if username is None or cred is None:
             return None
-        return User(username, self.users[username][1])
+        return User(username, cred.role)
 
     def issue_token(self, username: str) -> str:
         token = secrets.token_urlsafe(16)
@@ -87,8 +129,8 @@ class Store:
         return token
 
     def new_id(self) -> str:
-        self._seq += 1
-        return f"n{self._seq}"
+        # Unguessable: an attacker can't enumerate other users' notes by id.
+        return secrets.token_urlsafe(8)
 
 
 # --- typed per-request contexts (§2.7) -------------------------------------
@@ -121,8 +163,7 @@ class TokenCommand(Command):
             return json_response(
                 {"error": "invalid request"}, status=Status.BAD_REQUEST
             )
-        record = self._store.users.get(username)
-        if record is None or record[0] != password:
+        if not self._store.verify_credentials(username, password):
             return json_response(
                 {"error": "invalid credentials"}, status=Status.UNAUTHORIZED
             )
@@ -203,7 +244,8 @@ class NotesCollection(Resource[NotesCtx]):
 
 
 class NoteMember(Resource[MemberCtx]):
-    """Member: read for any authenticated user; write governed by the policy."""
+    """Member: every method (read and write) is governed by the policy — only the
+    owner or an admin is allowed; everyone else gets 403."""
 
     ALLOWED_METHODS = frozenset({"GET", "HEAD", "PUT", "DELETE"})
     context_class = MemberCtx
@@ -275,10 +317,6 @@ async def _rule_admin(ctx: MemberCtx) -> Effect | None:
     return Effect.ALLOW if ctx.user is not None and ctx.user.role == "admin" else None
 
 
-async def _rule_read(ctx: MemberCtx) -> Effect | None:
-    return Effect.ALLOW if ctx.request.method in {"GET", "HEAD"} else None
-
-
 async def _rule_owner(ctx: MemberCtx) -> Effect | None:
     if (note := ctx.note) is not None and ctx.user is not None:
         return Effect.ALLOW if note.owner == ctx.user.username else None
@@ -286,10 +324,11 @@ async def _rule_owner(ctx: MemberCtx) -> Effect | None:
 
 
 def build_policy() -> RuleEngine[MemberCtx]:
+    # Notes are private: only an admin or the owner may touch one, for *any*
+    # method (read included). Everyone else falls through to the default deny.
     return RuleEngine(
         [
             NamedRule("admin", _rule_admin),
-            NamedRule("read", _rule_read),
             NamedRule("owner", _rule_owner),
         ],
         default=Effect.DENY,
@@ -300,7 +339,7 @@ def build_policy() -> RuleEngine[MemberCtx]:
 
 
 def seed_store() -> Store:
-    return Store(users={"alice": ("pw-alice", "user"), "admin": ("pw-admin", "admin")})
+    return Store.seeded({"alice": ("pw-alice", "user"), "admin": ("pw-admin", "admin")})
 
 
 class OpenApiCommand(Command):
@@ -337,4 +376,6 @@ def make_app(store: Store | None = None, *, debug: bool = False) -> Starlette:
     return build_app(routes, debug=debug)
 
 
-app = make_app(debug=True)
+# debug=False: the decision-trace header (X-Asgimachine-Trace) would otherwise
+# leak the node path and policy outcomes. Enable it only for local debugging.
+app = make_app()
