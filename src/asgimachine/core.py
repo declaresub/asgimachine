@@ -234,6 +234,12 @@ async def _walk(resource: Resource[Any], ctx: Ctx) -> HttpResponse:
         raise _halt(ctx, "B7", Status.FORBIDDEN)
     ctx.trace.record("B7", True)
 
+    # B7a legally restricted? -> 451 (v4, RFC 7725) — denied for legal reasons.
+    # Recorded only when it fires (like the precondition nodes), so the canonical
+    # trace of a resource that doesn't use this extension is unchanged.
+    if await resource.is_legally_restricted(ctx):
+        raise _halt(ctx, "B7a", Status.UNAVAILABLE_FOR_LEGAL_REASONS)
+
     # Request-body validation (body-bearing methods only), in canonical order:
     # B6 valid_content_headers? -> 501, B5 known_content_type? -> 415,
     # B4 valid_entity_length? -> 413.
@@ -460,6 +466,9 @@ async def _handle_missing(
         moved = await resource.moved_permanently(ctx)
         if moved is not None:
             raise _halt(ctx, "K5", Status.MOVED_PERMANENTLY, {"Location": moved})
+        permanent = await resource.permanent_redirect(ctx)
+        if permanent is not None:  # K5a -> 308 (v4, RFC 7538): method-preserving
+            raise _halt(ctx, "K5a", Status.PERMANENT_REDIRECT, {"Location": permanent})
         temporary = await resource.moved_temporarily(ctx)
         if temporary is not None:
             raise _halt(ctx, "L5", Status.TEMPORARY_REDIRECT, {"Location": temporary})

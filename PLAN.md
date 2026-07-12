@@ -277,11 +277,13 @@ below is *additive* — one more boolean callback with a correct default (§2.3)
 none of it breaks the subset (§2.4). Not scheduled; a menu to draw from when a
 concrete need appears.
 
-- **`is_legally_restricted?` → 451** (RFC 7725). A trivial gate, natural neighbor
-  of `forbidden`/403.
-- **308 vs 301.** The diagram emits **308 Permanent Redirect** (RFC 7538) where
-  our K5 emits 301. Offer 308 (add `Status.PERMANENT_REDIRECT`); keep 301 for
-  callers that want the older semantics.
+- **`is_legally_restricted?` → 451** (RFC 7725). ✅ *Done* — node **B7a**, right
+  after `forbidden`/403 (traced only when it fires); the schema derives 451 when
+  the callback is overridden.
+- **308 vs 301.** ✅ *Done* — `Status.PERMANENT_REDIRECT` (308, RFC 7538) via a new
+  `permanent_redirect` callback at node **K5a**, checked after `moved_permanently`
+  (K5/301, unchanged) in the missing-resource branch. 301 keeps precedence when
+  both are set, so existing callers are untouched.
 - **Serve-anyway negotiation** (`ignore accept block mismatches`). Today an
   unacceptable `Accept` is a hard 406 at C4. The diagram lets a resource *opt to
   ignore* the mismatch and serve a default representation — a genuinely useful
