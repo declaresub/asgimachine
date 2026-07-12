@@ -274,53 +274,73 @@ CDN-cacheable. (This is the endpoint class that most rewards the whole exercise.
 
 ## 5. The Resource API
 
-All callbacks are `async def callback(self, ctx: Ctx) -> ...`, each with a
-correct default. Override only what a given resource needs.
+All callbacks are `async def callback(self, ctx: C) -> ...`, each with a correct
+default. Override only what a given resource needs. Static shape is a
+*declaration*, not a callback (§2.7): `ALLOWED_METHODS`, `PRODUCES`, `CONSUMES`,
+and `context_class` are class attributes.
 
 ```python
-class Resource:
+class Resource[C: Ctx = Ctx]:                                     # generic over its Ctx type
     KNOWN_METHODS = {"GET","HEAD","POST","PUT","PATCH","DELETE","OPTIONS"}
 
-    async def service_available(self, ctx) -> bool: ...          # -> 503
-    async def allowed_methods(self, ctx) -> list[str]: ...       # -> 405 + Allow
-    async def is_authorized(self, ctx) -> bool | str: ...        # str = WWW-Authenticate -> 401
-    async def forbidden(self, ctx) -> bool: ...                  # -> 403
-    async def known_content_type(self, ctx) -> bool: ...         # -> 415  (write path)
-    async def malformed_request(self, ctx) -> bool: ...          # -> 400  (write path)
-    async def resource_exists(self, ctx) -> bool: ...            # -> 404
-    async def generate_etag(self, ctx) -> str | None: ...        # -> 304 / 412
-    async def last_modified(self, ctx) -> datetime | None: ...   # -> 304 / 412
-    async def content_types_provided(self, ctx) -> list[tuple[str, Producer]]: ...  # -> 406
-    async def content_types_accepted(self, ctx) -> list[tuple[str, Acceptor]]: ...  # write path
-    async def is_conflict(self, ctx) -> bool: ...                # -> 409
-    async def delete_resource(self, ctx) -> bool: ...            # -> 204
+    # Declarations (static shape — §2.7):
+    ALLOWED_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})  # -> 405 + Allow
+    PRODUCES: tuple[str, ...] = ("application/json",)             # offered media types -> 406
+    CONSUMES: tuple[str, ...] = ()                                # accepted media types (writes)
+    context_class: type[Ctx] = Ctx                               # the Ctx subclass the core builds
+
+    async def service_available(self, ctx: C) -> bool: ...        # -> 503
+    async def allowed_methods(self, ctx: C) -> frozenset[str]: ...  # defaults to ALLOWED_METHODS
+    async def is_authorized(self, ctx: C) -> bool | str: ...      # str = WWW-Authenticate -> 401
+    async def forbidden(self, ctx: C) -> bool: ...                # -> 403
+    async def known_content_type(self, ctx: C) -> bool: ...       # -> 415  (write path)
+    async def malformed_request(self, ctx: C) -> bool: ...        # -> 400  (write path)
+    async def resource_exists(self, ctx: C) -> bool: ...          # -> 404
+    async def generate_etag(self, ctx: C) -> str | None: ...      # -> 304 / 412
+    async def last_modified(self, ctx: C) -> datetime | None: ... # -> 304 / 412
+    async def represent(self, ctx: C) -> Any: ...                 # GET/HEAD body, encoded per PRODUCES -> 406
+    async def apply(self, ctx: C, body: Any) -> Any: ...          # write handler, body parsed per CONSUMES
+    async def is_conflict(self, ctx: C) -> bool: ...              # -> 409
+    async def delete_resource(self, ctx: C) -> bool: ...          # -> 204
+    async def lifespan(self, ctx: C) -> AsyncGenerator[None]: ...  # per-request setup/teardown (above)
 ```
 
-`Ctx` is per-request scratch state (webmachine's ReqData + Context). It carries
-the request, holds what callbacks compute (`ctx.user`, `ctx.entity`,
-`ctx.chosen_media_type`), and accumulates the decision trace. **Per-request
-state lives on `Ctx`, never on the shared resource instance** — resources hold
-only their wired collaborators.
+`Ctx` is per-request scratch state (webmachine's ReqData + Context). Base `Ctx`
+is deliberately minimal and domain-agnostic — the request, the decision trace,
+the negotiated media type (`ctx.chosen_media_type`), the codec registry, and an
+`extra` bag. Domain state (a principal, the loaded entity) goes in a `Ctx`
+**subclass**: a resource is generic over its context (`Resource[C: Ctx = Ctx]`)
+and names the subclass via `context_class`, which the core constructs per request
+(§2.7). **Per-request state lives on `Ctx`, never on the shared resource
+instance** — resources hold only their wired collaborators.
 
-Example (the `accounts` resource, no DI):
+Example (the `accounts` resource, no DI — see `examples/accounts.py`):
 
 ```python
-class AccountsResource(Resource):
-    def __init__(self, retrieve_accounts_for_user, authenticate):
-        self._retrieve = retrieve_accounts_for_user   # store, wired at construction
-        self._authenticate = authenticate             # auth, wired at construction
+@dataclass(slots=True)
+class AccountsCtx(Ctx):                                # typed per-request state
+    user: User | None = None
+    accounts: list[Account] = field(default_factory=list)
 
-    async def allowed_methods(self, ctx):  return ["GET", "HEAD"]
+class AccountsResource(Resource[AccountsCtx]):         # generic over its Ctx subclass
+    ALLOWED_METHODS = frozenset({"GET", "HEAD"})
+    context_class = AccountsCtx
+
+    def __init__(self, retrieve_accounts_for_user, authenticate):
+        self._retrieve = retrieve_accounts_for_user    # store, wired at construction
+        self._authenticate = authenticate              # auth, wired at construction
+
     async def is_authorized(self, ctx):
-        user = await self._authenticate(ctx.request)
-        if user is None: return "Bearer"              # -> 401 WWW-Authenticate: Bearer
+        user = await self._authenticate(ctx)
+        if user is None: return "Bearer"               # -> 401 WWW-Authenticate: Bearer
         ctx.user = user; return True
     async def resource_exists(self, ctx):
-        ctx.entity = await self._retrieve(ctx.user.id); return True
+        assert ctx.user is not None                    # set by is_authorized, which runs first
+        ctx.accounts = await self._retrieve(ctx.user.id); return True
     async def generate_etag(self, ctx):
-        return f'W/"accounts-{ctx.user.id}-{len(ctx.entity)}"'
-    async def to_json(self, ctx):
-        return GetDataResponse[list[Account]](data=ctx.entity)
+        return f'W/"accounts-{ctx.user.id}-{len(ctx.accounts)}"'
+    async def represent(self, ctx):                    # encoded via PRODUCES (default JSON)
+        return {"data": [asdict(a) for a in ctx.accounts]}
 ```
 
 ### Per-request lifecycle: `lifespan`
