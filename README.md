@@ -165,10 +165,20 @@ Runnable apps in [`examples/`](examples/) (`uvicorn examples.<name>:app --reload
 
 ```bash
 uv sync
-uv run pytest        # test suite
-uv run pyright       # strict on src + examples
-uv run ruff check .  # lint
+uv run pytest             # test suite
+uv run pyright            # strict on src + examples
+uv run ruff check .       # lint
+uv run ruff format --check .  # style
 ```
+
+Enable the pre-push gate once per clone — it runs all four checks (the same as
+CI) before a push leaves your machine:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Bypass a single push with `git push --no-verify`.
 
 ## License
 
