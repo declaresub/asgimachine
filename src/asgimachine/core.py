@@ -62,7 +62,12 @@ async def run(
     """
 
     ctx = resource.context_class(
-        request=request, codecs=codecs if codecs is not None else dict(DEFAULT_CODECS)
+        # Copy per request: an injected registry is shared by reference across
+        # every request through the endpoint, so ctx must get its own dict (as the
+        # default branch already does) — else one request mutating ctx.codecs
+        # would corrupt others in flight.
+        request=request,
+        codecs=dict(codecs) if codecs is not None else dict(DEFAULT_CODECS),
     )
     # The resource's per-request lifespan wraps the entire walk. It is a plain
     # async generator (no @asynccontextmanager on the override — §5); the core
