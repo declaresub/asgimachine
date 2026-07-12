@@ -21,6 +21,7 @@ from .conditional import (
     http_date,
     if_match_matches,
     if_none_match_matches,
+    modified_since,
     not_modified_since,
 )
 from .http import HaltResponse, HttpResponse, Status, serialize
@@ -418,9 +419,11 @@ async def _check_preconditions(
     if ifm is not None and not if_match_matches(ifm, etag):
         raise _halt(ctx, "G11", Status.PRECONDITION_FAILED, dict(validator_headers))
 
-    # H10/H12 If-Unmodified-Since -> 412
+    # H10/H12 If-Unmodified-Since -> 412. Ignored entirely when If-Match is
+    # present (RFC 9110 §13.1.4) and treated as passing when unverifiable (no
+    # Last-Modified / unparseable date) — only a *known* later modification 412s.
     ius = headers.get("if-unmodified-since")
-    if ius is not None and not not_modified_since(ius, last_modified):
+    if ifm is None and ius is not None and modified_since(ius, last_modified):
         raise _halt(ctx, "H12", Status.PRECONDITION_FAILED, dict(validator_headers))
 
     # I12/K13 If-None-Match -> 304 (GET/HEAD) / 412 (writes)
