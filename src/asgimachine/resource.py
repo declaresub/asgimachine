@@ -85,6 +85,12 @@ class Resource:
     async def last_modified(self, ctx: Ctx) -> datetime | None:
         return None
 
+    # O18 -> 300. When the resource offers several representations and wants the
+    # client to choose, return 300 with the list (from PRODUCES). Default: pick
+    # one via negotiation and return 200.
+    async def multiple_choices(self, ctx: Ctx) -> bool:
+        return False
+
     # --- caching (v3): emitted on cacheable responses (200/304) ------------
     async def expires(self, ctx: Ctx) -> datetime | None:
         # -> Expires header.

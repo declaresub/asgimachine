@@ -176,10 +176,19 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
     # Method dispatch (M/N/O). GET/HEAD build a representation; write methods run
     # their processing nodes.
     if method in SAFE_METHODS:
-        # O18 build the representation and encode it via the negotiated codec
-        # (HEAD suppresses the body; an async iterator streams — §8).
-        value = await resource.represent(ctx)
         headers = {"Content-Type": chosen, **cacheable_headers}
+        # O18 multiple representations? -> 300 with the list of offered types.
+        if await resource.multiple_choices(ctx):
+            ctx.trace.record("O18", int(Status.MULTIPLE_CHOICES))
+            choices: object = {"choices": list(resource.PRODUCES)}
+            return HttpResponse(
+                status=int(Status.MULTIPLE_CHOICES),
+                headers=headers,
+                body=_body(choices, head=method == "HEAD", ctx=ctx),
+            )
+        # Otherwise build the representation and encode it via the negotiated
+        # codec (HEAD suppresses the body; an async iterator streams — §8).
+        value = await resource.represent(ctx)
         ctx.trace.record("O18", int(Status.OK))
         return HttpResponse(
             status=int(Status.OK),
