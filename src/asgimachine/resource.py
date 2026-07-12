@@ -152,6 +152,15 @@ class Resource[C: Ctx = Ctx]:
     # representation built by represent(). Set on the class or per-instance.
     PRODUCES: tuple[str, ...] = ("application/json",)
 
+    # C4a -> serve default instead of 406 (v4, RFC 9110 §12.1): when an Accept
+    # can't be satisfied, a resource that declares this True disregards Accept and
+    # serves PRODUCES[0] rather than 406. Static shape, read through the thin
+    # callback below (§2.7); the schema drops 406 from the surface when it is set.
+    IGNORE_UNACCEPTABLE: ClassVar[bool] = False
+
+    async def ignore_unacceptable(self, ctx: C) -> bool:
+        return self.IGNORE_UNACCEPTABLE
+
     async def represent(self, ctx: C) -> Any:
         # The representation value (a domain model / dict / etc.), encoded by the
         # negotiated codec. The typed return is the response model for schema.
