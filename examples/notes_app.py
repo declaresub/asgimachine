@@ -180,9 +180,8 @@ class NotesCollection(Resource):
             get=Operation(
                 summary="List your notes", responses={200: {"type": "object"}}
             ),
-            post=Operation(
-                summary="Create a note", request=NoteInput, responses={201: None}
-            ),
+            # request body derives from apply(ctx, body: NoteInput).
+            post=Operation(summary="Create a note", responses={201: None}),
         )
 
 
@@ -242,7 +241,6 @@ class NoteMember(Resource):
             get=Operation(summary="Read a note", responses={200: _NOTE}),
             put=Operation(
                 summary="Create or update a note",
-                request=NoteInput,
                 responses={201: None, 204: None},
             ),
             delete=Operation(summary="Delete a note", responses={204: None}),

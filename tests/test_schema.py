@@ -238,6 +238,30 @@ def test_security_schemes_and_document_default() -> None:
     assert "security" not in doc["paths"]["/w"]["get"]
 
 
+class TypedResource(Resource):
+    ALLOWED_METHODS = frozenset({"GET", "PUT"})
+    CONSUMES = ("application/json",)
+
+    async def represent(self, ctx: Ctx) -> Widget:
+        return Widget(name="x", size=1)
+
+    async def apply(self, ctx: Ctx, body: Widget) -> None:
+        return None
+
+    def describe(self) -> ResourceDescription:
+        # No bodies declared — request derives from apply(body), 200 from represent.
+        return ResourceDescription()
+
+
+def test_models_derived_from_signatures() -> None:
+    doc = generate_openapi(title="T", version="1", routes=[("/t", TypedResource())])
+    op = doc["paths"]["/t"]
+    get_schema = op["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    assert set(get_schema["properties"]) == {"name", "size"}
+    put_schema = op["put"]["requestBody"]["content"]["application/json"]["schema"]
+    assert set(put_schema["properties"]) == {"name", "size"}
+
+
 def test_public_operation_overrides_security() -> None:
     class PublicResource(Resource):
         def describe(self) -> ResourceDescription:

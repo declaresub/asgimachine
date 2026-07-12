@@ -29,7 +29,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, get_type_hints
 
 from .resource import Resource
 
@@ -155,6 +155,22 @@ def _security_for(declared: Operation | None) -> list[dict[str, list[str]]] | No
     return [{name: []} for name in names]
 
 
+def _model_hint(func: object, key: str) -> type | None:
+    """A Pydantic-model annotation on ``func``'s ``key`` param/return, or None.
+
+    Only real model types (exposing ``model_json_schema``) are derived; loose
+    annotations (``object``/``dict``/``None``) fall back to what ``describe()``
+    declares."""
+
+    try:
+        hint = get_type_hints(func).get(key)
+    except Exception:  # noqa: BLE001 — unresolvable annotation -> no derivation
+        return None
+    if isinstance(hint, type) and hasattr(hint, "model_json_schema"):
+        return hint
+    return None
+
+
 def _operation(
     method: str,
     declared: Operation | None,
@@ -166,13 +182,23 @@ def _operation(
         result["summary"] = declared.summary
     if params:
         result["parameters"] = params
-    if declared is not None and declared.request is not None:
-        result["requestBody"] = {"required": True, **_content(declared.request)}
+
+    # requestBody: declared, else derived from apply()'s typed body param.
+    request = declared.request if declared is not None else None
+    if request is None and method.upper() in _BODY_METHODS:
+        request = _model_hint(type(resource).apply, "body")
+    if request is not None:
+        result["requestBody"] = {"required": True, **_content(request)}
 
     responses: dict[str, Any] = {}
     declared_responses = (declared.responses if declared is not None else None) or {}
     for status, model in declared_responses.items():
         responses[str(status)] = _response(status, model)
+    # 200 for a read: declared, else derived from represent()'s return type.
+    if method.upper() in _READ_METHODS and "200" not in responses:
+        derived = _model_hint(type(resource).represent, "return")
+        if derived is not None:
+            responses["200"] = _response(200, derived)
     for status in sorted(_auto_error_statuses(resource, method.upper())):
         responses.setdefault(str(status), _response(status, None))
     if not responses:
