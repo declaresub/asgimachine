@@ -3,6 +3,15 @@ revision = 3
 requires-python = ">=3.14"
 
 [[package]]
+name = "abnf"
+version = "2.5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bb/b7/a1419e559705e68bb80c9dd9c3fcfce5b0b3cbecd07dd4b3e91a50f1888e/abnf-2.5.1.tar.gz", hash = "sha256:a186898445c9ed8f5fdda0b87eab6c7d7e4c9197e1c90e7dab1069758e7c867c", size = 421588, upload-time = "2026-06-14T20:07:10.513Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d4/7e/da9a4b954e5ad9ee0d2df2c8b324de4215c939916dfdb385d18c15689738/abnf-2.5.1-py3-none-any.whl", hash = "sha256:4013a03c0ebf3f090a72b2c0dbf24c839bdba25905e69ef425fd951cfdacf99a", size = 56877, upload-time = "2026-06-14T20:07:09.299Z" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -28,6 +37,7 @@ name = "asgimachine"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "abnf" },
     { name = "anyio" },
     { name = "starlette" },
 ]
@@ -46,6 +56,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "abnf", specifier = ">=2.5.1" },
     { name = "anyio", specifier = ">=4" },
     { name = "starlette", specifier = ">=0.37" },
 ]

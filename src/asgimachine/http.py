@@ -14,6 +14,9 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Protocol, runtime_checkable
 
+from abnf import ParseError
+from abnf.grammars import rfc9110
+
 
 def serialize(value: object) -> bytes:
     """Turn a value into response bytes (PLAN.md §6), shared by both lanes.
@@ -102,6 +105,22 @@ DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MiB
 # A response body is either buffered bytes or a live async byte stream (§8).
 Body = bytes | AsyncIterator[bytes]
 
+# RFC 9110 §5.5 field-value grammar (no obs-fold), reused across responses. A value
+# that fails it contains CR/LF or a control octet — i.e. a header-injection vector.
+_FIELD_VALUE = rfc9110.Rule("field-value")
+
+
+class MalformedHeader(Exception):
+    """A response header value is not a valid RFC 9110 field-value (it contains
+    CR/LF or a control octet). Raised at ``HttpResponse`` construction — emitting
+    such a header is a resource bug, so we fail closed (→ 500) rather than risk a
+    response-splitting injection. The value is left out of the message on purpose
+    (it is the untrusted, possibly CRLF-bearing data)."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(f"invalid value for response header {name!r}")
+
 
 @dataclass(slots=True)
 class HttpResponse:
@@ -110,6 +129,17 @@ class HttpResponse:
     status: int
     headers: dict[str, str] = field(default_factory=dict[str, str])
     body: Body = b""
+
+    def __post_init__(self) -> None:
+        # Poka-yoke: a malformed header value is un-constructable. Every response
+        # from both lanes flows through here, so no header reaches the wire without
+        # conforming to the field-value grammar (guards Location/ETag/… built from
+        # client-influenced data — e.g. a CRLF-bearing path param).
+        for name, value in self.headers.items():
+            try:
+                _FIELD_VALUE.parse_all(value)
+            except ParseError:
+                raise MalformedHeader(name) from None
 
     @property
     def is_stream(self) -> bool:
