@@ -83,7 +83,20 @@ class HttpRequest(Protocol):
     @property
     def path_params(self) -> Mapping[str, str]: ...
 
-    async def body(self) -> bytes: ...
+    async def body(self) -> bytes:
+        """The buffered request body.
+
+        May raise :class:`BodyTooLarge` (the substrate bounds the read at the
+        resource's limit → 413) or :class:`BodyMalformed` (the bytes read
+        disagree with ``Content-Length`` → 400). The graph and command lanes map
+        these to their statuses.
+        """
+        ...
+
+
+# Default cap (bytes) on a buffered request body. A resource overrides it via
+# ``Resource.MAX_BODY_BYTES``; the command lane via ``command_route(max_body_bytes=)``.
+DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MiB
 
 
 # A response body is either buffered bytes or a live async byte stream (§8).
@@ -112,3 +125,13 @@ class HaltResponse(Exception):
     def __init__(self, response: HttpResponse) -> None:
         self.response = response
         super().__init__(f"halt {response.status}")
+
+
+class BodyTooLarge(Exception):
+    """The request body exceeded the resource's limit. Raised by the substrate's
+    ``HttpRequest.body`` (a bounded read); the lanes map it to 413."""
+
+
+class BodyMalformed(Exception):
+    """The request body's length disagreed with ``Content-Length`` — a framing
+    error. Raised by ``HttpRequest.body``; the lanes map it to 400."""

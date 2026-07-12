@@ -317,6 +317,7 @@ class Resource[C: Ctx = Ctx]:                                     # generic over
     ALLOWED_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})  # -> 405 + Allow
     PRODUCES: tuple[str, ...] = ("application/json",)             # offered media types -> 406
     CONSUMES: tuple[str, ...] = ()                                # accepted media types (writes)
+    MAX_BODY_BYTES: ClassVar[int] = 1 << 20                       # request-body cap (bytes) -> 413
     context_class: type[Ctx] = Ctx                               # the Ctx subclass the core builds
 
     async def service_available(self, ctx: C) -> bool: ...        # -> 503
