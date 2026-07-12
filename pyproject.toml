@@ -5,7 +5,7 @@ description = "A webmachine-style HTTP decision-graph framework for Python."
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
-authors = [{ name = "Charles Constant" }]
+authors = [{ name = "Charles Yeomans" }]
 dependencies = ["starlette>=0.37", "anyio>=4"]
 
 [project.urls]
