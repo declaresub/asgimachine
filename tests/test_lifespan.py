@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 import anyio
 import pytest
 
+from asgimachine import core
 from asgimachine.core import run
 from asgimachine.http import Status
 from asgimachine.resource import Ctx, Resource
@@ -141,6 +142,50 @@ async def test_streaming_teardown_on_early_close() -> None:
     assert log == ["open", "error:GeneratorExit", "close"]
 
 
+async def test_streaming_teardown_when_never_iterated() -> None:
+    # Regression: a client disconnect BEFORE the first chunk means the substrate
+    # closes the body without ever iterating it. With an async-generator body the
+    # finally never ran (the generator was never started) -> permanent leak. The
+    # _ClosingStream wrapper releases on aclose regardless of iteration state.
+    log: list[str] = []
+
+    class Streamer(LifeResource):
+        async def represent(self, ctx: LifeCtx) -> object:
+            async def chunks() -> AsyncGenerator[bytes]:
+                yield b"never reached"
+
+            return chunks()
+
+    response = await run(Streamer(log), FakeRequest())
+    body = response.body
+    assert not isinstance(body, (bytes, bytearray))
+    assert log == ["open"]  # not yet iterated
+    await body.aclose()  # type: ignore[union-attr]
+    # Teardown ran despite the body never being iterated.
+    assert log == ["open", "error:GeneratorExit", "close"]
+
+
+async def test_streaming_teardown_is_idempotent() -> None:
+    # Drain fully (releases once, clean), then the substrate's belt-and-suspenders
+    # aclose must NOT release a second time.
+    log: list[str] = []
+
+    class Streamer(LifeResource):
+        async def represent(self, ctx: LifeCtx) -> object:
+            async def chunks() -> AsyncGenerator[bytes]:
+                yield b"only"
+
+            return chunks()
+
+    response = await run(Streamer(log), FakeRequest())
+    body = response.body
+    assert not isinstance(body, (bytes, bytearray))
+    assert [c async for c in body] == [b"only"]
+    assert log == ["open", "close"]  # drained cleanly -> one release, no rollback
+    await body.aclose()  # type: ignore[union-attr]
+    assert log == ["open", "close"]  # still exactly one release
+
+
 async def test_teardown_is_shielded_from_cancellation() -> None:
     log: list[str] = []
 
@@ -166,3 +211,27 @@ async def test_teardown_is_shielded_from_cancellation() -> None:
         await task
     # The shielded teardown ran to completion despite the cancellation.
     assert log == ["open", "close"]
+
+
+async def test_teardown_timeout_prevents_hang(monkeypatch) -> None:
+    # A lifespan whose release blocks forever (rollback on a dead socket) must not
+    # hang the request: the shield is bounded by _TEARDOWN_TIMEOUT_S.
+    monkeypatch.setattr(core, "_TEARDOWN_TIMEOUT_S", 0.05)
+    log: list[str] = []
+
+    class Hanger(LifeResource):
+        async def lifespan(self, ctx: LifeCtx) -> AsyncGenerator[None]:
+            log.append("open")
+            try:
+                yield
+            finally:
+                log.append("release-start")
+                await anyio.sleep(30)  # blocks well past the timeout
+                log.append("release-done")  # unreachable — abandoned at timeout
+
+    with anyio.fail_after(5):  # safety net; real completion is ~0.05s
+        response = await run(Hanger(log), FakeRequest())
+    assert response.status == int(Status.OK)
+    # Release was attempted then abandoned at the timeout, not run to completion
+    # ("represent" is logged by the base LifeResource.represent).
+    assert log == ["open", "represent", "release-start"]
