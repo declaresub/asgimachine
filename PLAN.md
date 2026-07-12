@@ -323,6 +323,42 @@ class AccountsResource(Resource):
         return GetDataResponse[list[Account]](data=ctx.entity)
 ```
 
+### Per-request lifecycle: `lifespan`
+
+A resource that needs a per-request resource — the common case being a database
+connection acquired from a pool — overrides `lifespan`, which wraps the whole
+graph walk:
+
+```python
+async def lifespan(self, ctx: WidgetsCtx) -> AsyncGenerator[None]:
+    async with self._pool.acquire() as conn:   # setup
+        ctx.conn = conn
+        yield                                   # ...the walk runs here...
+    # teardown (releasing conn) runs on every exit
+```
+
+It is a **plain async generator** — override it with setup, one `yield`, and
+teardown; **no `@asynccontextmanager`**. The core owns the wrapping (`run` does
+`asynccontextmanager(resource.lifespan)(ctx)`), which is what lets it also own the
+hard part — *release*:
+
+- **Where to open:** before the walk, so `is_authorized`/`resource_exists` can
+  already query. The connection is available to every callback via `ctx`.
+- **Where to release:** guaranteed on *every* exit — a normal response, a halt
+  (404/401/…), a raised error, or a client disconnect. A `HaltResponse` closes
+  cleanly (no halt fires after a mutation runs); a real exception is fed into the
+  generator, so `async with conn.transaction()` rolls back.
+- **Cancellation-shielded.** Teardown runs inside `anyio.CancelScope(shield=True)`,
+  so a disconnect mid-request cannot interrupt the release await (a rollback).
+- **Streaming-aware.** For a streamed body (which outlives the walk), teardown is
+  deferred until the iterator is drained (or abandoned), so the connection stays
+  alive for the life of the stream. **Caveat:** don't hold a transaction across a
+  long stream — read eagerly, or release before yielding the iterator.
+
+Not needing `@asynccontextmanager` isn't just ergonomics: because the declared
+return is `AsyncGenerator[None]`, forgetting the `yield` is a *type error*, where
+forgetting a decorator would be a runtime surprise. See `examples/connection.py`.
+
 ---
 
 ## 6. The core walk

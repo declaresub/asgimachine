@@ -28,6 +28,7 @@ name = "asgimachine"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "starlette" },
 ]
 
@@ -44,7 +45,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "starlette", specifier = ">=0.37" }]
+requires-dist = [
+    { name = "anyio", specifier = ">=4" },
+    { name = "starlette", specifier = ">=0.37" },
+]
 
 [package.metadata.requires-dev]
 dev = [

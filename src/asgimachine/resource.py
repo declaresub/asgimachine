@@ -10,7 +10,7 @@ the shared resource instance — resources hold only their wired collaborators (
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -58,6 +58,31 @@ class Resource[C: Ctx = Ctx]:
     # The Ctx (sub)class the core constructs for each request. Declare a subclass
     # alongside ``Resource[MyCtx]`` when a resource needs typed per-request state.
     context_class: type[Ctx] = Ctx
+
+    async def lifespan(self, ctx: C) -> AsyncGenerator[None]:
+        """Per-request setup/teardown, wrapping the whole graph walk.
+
+        Override as a *plain async generator* — acquire in the setup half,
+        ``yield`` exactly once, release after. **No decorator**: the core wraps
+        this in an async context manager itself, so a forgotten
+        ``@asynccontextmanager`` can't bite. (Forgetting the ``yield`` instead is
+        a type error, since the declared return is ``AsyncIterator[None]``.)
+
+        The core opens this before B13 and closes it on the way out, guaranteed
+        across every exit — a normal response, a halt (404/401/…), a raised
+        error, or a client disconnect. The teardown is cancellation-shielded, so
+        a disconnect cannot interrupt resource release; and for a *streaming*
+        response it is deferred until the body is fully drained, so a connection
+        stashed on ``ctx`` stays alive for the life of the stream. An in-flight
+        exception is fed into the generator (so ``async with conn.transaction()``
+        rolls back), but the lifespan must not *suppress* it::
+
+            async def lifespan(self, ctx: MyCtx) -> AsyncIterator[None]:
+                async with self._pool.acquire() as conn:  # released on any exit
+                    ctx.conn = conn
+                    yield
+        """
+        yield
 
     KNOWN_METHODS = frozenset(
         {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},

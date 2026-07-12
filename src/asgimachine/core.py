@@ -10,8 +10,11 @@ decides; any node may raise :class:`HaltResponse` to short-circuit.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast, get_type_hints
+
+import anyio
 
 from .codec import DEFAULT_CODECS
 from .conditional import (
@@ -53,13 +56,62 @@ async def run(
     ctx = resource.context_class(
         request=request, codecs=codecs if codecs is not None else dict(DEFAULT_CODECS)
     )
+    # The resource's per-request lifespan wraps the entire walk. It is a plain
+    # async generator (no @asynccontextmanager on the override — §5); the core
+    # owns the wrapping so it can also own guaranteed, cancellation-safe teardown.
+    lifespan = asynccontextmanager(resource.lifespan)(ctx)
+    await lifespan.__aenter__()
     try:
         response = await _walk(resource, ctx)
     except HaltResponse as halt:
         response = halt.response
+    except BaseException as exc:
+        # A real error or a cancellation (client disconnect): tear down with the
+        # exception in flight so a lifespan transaction rolls back, then re-raise.
+        await _teardown(lifespan, exc)
+        raise
     if debug:
         response.headers[TRACE_HEADER] = ctx.trace.header_value
+    if response.is_stream:
+        # The streamed body outlives this call; defer teardown until it drains so
+        # a connection stashed on ctx stays alive for the life of the stream.
+        stream = cast("AsyncIterator[bytes]", response.body)
+        response.body = _closing_stream(stream, lifespan)
+        return response
+    await _teardown(lifespan, None)
     return response
+
+
+async def _teardown(
+    lifespan: AbstractAsyncContextManager[None], exc: BaseException | None
+) -> None:
+    """Close the lifespan, shielded so a client disconnect cannot interrupt
+    resource release. An in-flight ``exc`` is fed in (rollback); a lifespan that
+    *suppresses* it is a misuse — the original outcome is still propagated."""
+
+    with anyio.CancelScope(shield=True):
+        if exc is None:
+            await lifespan.__aexit__(None, None, None)
+        else:
+            await lifespan.__aexit__(type(exc), exc, exc.__traceback__)
+
+
+async def _closing_stream(
+    body: AsyncIterator[bytes], lifespan: AbstractAsyncContextManager[None]
+) -> AsyncIterator[bytes]:
+    """Relay the streamed body, then tear the lifespan down — so per-request
+    resources live until the stream is fully drained (or the client disconnects,
+    which throws GeneratorExit/cancellation in here and still runs teardown)."""
+
+    exc: BaseException | None = None
+    try:
+        async for chunk in body:
+            yield chunk
+    except BaseException as e:
+        exc = e
+        raise
+    finally:
+        await _teardown(lifespan, exc)
 
 
 def _halt(
