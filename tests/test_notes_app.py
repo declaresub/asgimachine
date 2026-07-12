@@ -16,8 +16,8 @@ from examples.notes_app import Store, make_app
 
 @pytest.fixture
 def app_ctx():
-    store = Store(
-        users={"alice": ("pw", "user"), "bob": ("pw", "user"), "admin": ("pw", "admin")}
+    store = Store.seeded(
+        {"alice": ("pw", "user"), "bob": ("pw", "user"), "admin": ("pw", "admin")}
     )
     client = TestClient(make_app(store, debug=True))
 
@@ -82,9 +82,11 @@ def test_collection_create_and_list(app_ctx) -> None:
     h = _auth(token("alice"))
     created = client.post("/notes", json={"text": "first"}, headers=h)
     assert created.status_code == 201
-    assert created.headers["location"] == "/notes/n1"
+    loc = created.headers["location"]
+    assert loc.startswith("/notes/")
+    note_id = loc.removeprefix("/notes/")  # unguessable, so read it back from Location
     listing = client.get("/notes", headers=h)
-    assert listing.json() == {"notes": [{"id": "n1", "text": "first"}]}
+    assert listing.json() == {"notes": [{"id": note_id, "text": "first"}]}
 
 
 def test_collection_create_malformed_is_400(app_ctx) -> None:
@@ -112,15 +114,14 @@ def test_owner_can_read_and_update(app_ctx) -> None:
     )
 
 
-def test_any_authenticated_user_can_read(app_ctx) -> None:
+def test_non_owner_cannot_read_403(app_ctx) -> None:
+    # Notes are private: a non-owner (non-admin) reading another user's note is
+    # denied by the policy default, recorded before B7 returns 403.
     client, token = app_ctx
     loc = _make_note(client, token("alice"))
     resp = client.get(loc, headers=_auth(token("bob")))
-    assert resp.status_code == 200
-    # The 'read' rule fires, merged into the decision trace.
-    assert_trace(
-        resp, ["B13", "B12", "B10", "B8", "policy:read", "B7", "C4", "G7", "O18"]
-    )
+    assert resp.status_code == 403
+    assert_trace(resp, ["B13", "B12", "B10", "B8", "policy:default", "B7"])
 
 
 def test_non_owner_cannot_write_403(app_ctx) -> None:
@@ -163,10 +164,11 @@ def test_owner_write_trace_shows_owner_rule(app_ctx) -> None:
 def test_admin_can_delete_any_note(app_ctx) -> None:
     client, token = app_ctx
     loc = _make_note(client, token("alice"))
-    assert (
-        client.request("DELETE", loc, headers=_auth(token("admin"))).status_code == 204
-    )
-    assert client.get(loc, headers=_auth(token("alice"))).status_code == 404
+    admin = token("admin")
+    assert client.request("DELETE", loc, headers=_auth(admin)).status_code == 204
+    # Confirm it's gone via an *authorized* principal (admin): 404, not the 403 a
+    # non-owner now gets (authorization runs before existence — webmachine order).
+    assert client.get(loc, headers=_auth(admin)).status_code == 404
 
 
 def test_member_conditional_get_304(app_ctx) -> None:
