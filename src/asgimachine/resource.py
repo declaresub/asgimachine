@@ -1,11 +1,11 @@
 """The Resource base class and per-request context (PLAN.md §5).
 
 Every callback is ``async`` and ships a *correct HTTP default* (§2.3): a resource
-that overrides only ``content_types_provided``/``to_json`` already gets
-405/406/404/304/501/503 behavior for free.
+that overrides only ``represent``/``PRODUCES`` already gets 405/406/404/304/501/503
+behavior for free.
 
-Per-request state lives on :class:`Ctx`, never on the shared resource instance —
-resources hold only their wired collaborators (§2.2).
+Per-request state lives on :class:`Ctx` (or a resource-defined subclass), never on
+the shared resource instance — resources hold only their wired collaborators (§2.2).
 """
 
 from __future__ import annotations
@@ -29,26 +29,35 @@ Producer = Callable[["Ctx"], Awaitable[Any]]
 
 @dataclass(slots=True)
 class Ctx:
-    """webmachine's ReqData + Context: per-request scratch state.
+    """webmachine's ReqData: the *framework's* per-request state.
 
-    Carries the request, holds what callbacks compute, and accumulates the
-    decision trace. Attributes like ``user``/``entity`` are set by resource
-    callbacks; the core only writes ``chosen_media_type``.
+    Deliberately minimal and domain-agnostic — it holds the request, the trace,
+    negotiation result, and codec registry, plus an untyped ``extra`` bag. Domain
+    state (a principal, the loaded entity) is not the framework's business: a
+    resource that wants typed per-request state subclasses ``Ctx`` and declares
+    it (see ``Resource.context_class`` and PLAN.md §2.7).
     """
 
     request: HttpRequest
     trace: Trace = field(default_factory=Trace)
     chosen_media_type: str | None = None
     allowed_methods: frozenset[str] = field(default_factory=frozenset[str])
-    user: Any = None
-    entity: Any = None
     extra: dict[str, Any] = field(default_factory=dict[str, Any])
     # Framework config: the media-type -> Codec registry for this request.
     codecs: dict[str, Codec] = field(default_factory=dict[str, "Codec"])
 
 
-class Resource:
-    """Base class for graph-lane endpoints. Override only what you care about."""
+class Resource[C: Ctx = Ctx]:
+    """Base class for graph-lane endpoints. Override only what you care about.
+
+    Generic over its context type ``C``: subclass ``Ctx`` for typed per-request
+    state and declare it via ``context_class`` (and ``Resource[MyCtx]`` for the
+    checker). Plain ``Resource`` uses base ``Ctx``.
+    """
+
+    # The Ctx (sub)class the core constructs for each request. Declare a subclass
+    # alongside ``Resource[MyCtx]`` when a resource needs typed per-request state.
+    context_class: type[Ctx] = Ctx
 
     KNOWN_METHODS = frozenset(
         {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -60,49 +69,49 @@ class Resource:
     # it on the class (or per-instance in __init__); it is the schema anchor.
     ALLOWED_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
 
-    async def allowed_methods(self, ctx: Ctx) -> frozenset[str]:
+    async def allowed_methods(self, ctx: C) -> frozenset[str]:
         # The graph reads the method set through this callback, defaulting to the
         # ALLOWED_METHODS declaration. Override only for genuine per-request
         # variation; the schema still documents ALLOWED_METHODS.
         return self.ALLOWED_METHODS
 
     # --- B13 ---------------------------------------------------------------
-    async def service_available(self, ctx: Ctx) -> bool:
+    async def service_available(self, ctx: C) -> bool:
         return True
 
     # --- B8 ----------------------------------------------------------------
-    async def is_authorized(self, ctx: Ctx) -> bool | str:
+    async def is_authorized(self, ctx: C) -> bool | str:
         # True = authorized; False = 401 (no challenge); str = 401 with that
         # WWW-Authenticate challenge value.
         return True
 
     # --- B7 ----------------------------------------------------------------
-    async def forbidden(self, ctx: Ctx) -> bool:
+    async def forbidden(self, ctx: C) -> bool:
         return False
 
     # --- G7 ----------------------------------------------------------------
-    async def resource_exists(self, ctx: Ctx) -> bool:
+    async def resource_exists(self, ctx: C) -> bool:
         return True
 
     # --- conditional GET (G8-L17 subset) -----------------------------------
-    async def generate_etag(self, ctx: Ctx) -> str | None:
+    async def generate_etag(self, ctx: C) -> str | None:
         return None
 
-    async def last_modified(self, ctx: Ctx) -> datetime | None:
+    async def last_modified(self, ctx: C) -> datetime | None:
         return None
 
     # O18 -> 300. When the resource offers several representations and wants the
     # client to choose, return 300 with the list (from PRODUCES). Default: pick
     # one via negotiation and return 200.
-    async def multiple_choices(self, ctx: Ctx) -> bool:
+    async def multiple_choices(self, ctx: C) -> bool:
         return False
 
     # --- caching (v3): emitted on cacheable responses (200/304) ------------
-    async def expires(self, ctx: Ctx) -> datetime | None:
+    async def expires(self, ctx: C) -> datetime | None:
         # -> Expires header.
         return None
 
-    async def cache_control(self, ctx: Ctx) -> str | None:
+    async def cache_control(self, ctx: C) -> str | None:
         # -> Cache-Control header, e.g. "public, max-age=31536000, immutable"
         # for an archived, immutable feed page.
         return None
@@ -112,7 +121,7 @@ class Resource:
     # representation built by represent(). Set on the class or per-instance.
     PRODUCES: tuple[str, ...] = ("application/json",)
 
-    async def represent(self, ctx: Ctx) -> Any:
+    async def represent(self, ctx: C) -> Any:
         # The representation value (a domain model / dict / etc.), encoded by the
         # negotiated codec. The typed return is the response model for schema.
         raise NotImplementedError(
@@ -120,7 +129,7 @@ class Resource:
             "implement represent().",
         )
 
-    async def variances(self, ctx: Ctx) -> Sequence[str]:
+    async def variances(self, ctx: C) -> Sequence[str]:
         # Extra request-header names this representation varies on, emitted in
         # Vary. The core adds "Accept" automatically when more than one media
         # type is offered, so only list additional axes (e.g. an auth header).
@@ -129,20 +138,20 @@ class Resource:
     # --- write path (§4 v2) -----------------------------------------------
     # Body-validation nodes. Traversed only for body-bearing methods
     # (POST/PUT/PATCH); each ships a correct default that passes.
-    async def malformed_request(self, ctx: Ctx) -> bool:  # B9 -> 400
+    async def malformed_request(self, ctx: C) -> bool:  # B9 -> 400
         return False
 
-    async def valid_content_headers(self, ctx: Ctx) -> bool:  # B6 -> 501
+    async def valid_content_headers(self, ctx: C) -> bool:  # B6 -> 501
         return True
 
-    async def valid_entity_length(self, ctx: Ctx) -> bool:  # B4 -> 413
+    async def valid_entity_length(self, ctx: C) -> bool:  # B4 -> 413
         return True
 
     # The mirror of PRODUCES on the write side: request Content-Types this
     # resource accepts. Empty by default (a read-only resource declares none).
     CONSUMES: tuple[str, ...] = ()
 
-    async def apply(self, ctx: Ctx, body: Any) -> Any:
+    async def apply(self, ctx: C, body: Any) -> Any:
         # The write handler for PUT/PATCH/POST-create. The core decodes the
         # request via the negotiated codec and parses it into ``body``'s declared
         # type before calling this — annotate ``body: NoteInput`` (a Pydantic
@@ -153,7 +162,7 @@ class Resource:
             f"{type(self).__name__} accepts writes but does not implement apply().",
         )
 
-    async def known_content_type(self, ctx: Ctx) -> bool:
+    async def known_content_type(self, ctx: C) -> bool:
         # B5 -> 415. Default: if the resource declares CONSUMES, the request's
         # Content-Type must be one of them; otherwise anything is accepted.
         if not self.CONSUMES:
@@ -161,12 +170,12 @@ class Resource:
         media = parse_content_type(ctx.request.headers.get("content-type"))
         return media is not None and media in self.CONSUMES
 
-    async def is_conflict(self, ctx: Ctx) -> bool:
+    async def is_conflict(self, ctx: C) -> bool:
         # O14 -> 409. e.g. a PUT that would violate an invariant.
         return False
 
     # DELETE (M20/M16)
-    async def delete_resource(self, ctx: Ctx) -> bool:
+    async def delete_resource(self, ctx: C) -> bool:
         # Perform the delete; return True once enacted. Resources that allow
         # DELETE must implement this.
         raise NotImplementedError(
@@ -174,37 +183,37 @@ class Resource:
             "delete_resource().",
         )
 
-    async def delete_completed(self, ctx: Ctx) -> bool:
+    async def delete_completed(self, ctx: C) -> bool:
         # M20 -> True = fully done (204); False = accepted for later (202).
         return True
 
     # POST (N11)
-    async def post_is_create(self, ctx: Ctx) -> bool:
+    async def post_is_create(self, ctx: C) -> bool:
         # True -> POST creates a new resource at create_path (201 + Location).
         # False -> POST is an action; process_post handles it.
         return False
 
-    async def create_path(self, ctx: Ctx) -> str:
+    async def create_path(self, ctx: C) -> str:
         raise NotImplementedError(
             f"{type(self).__name__} sets post_is_create but does not implement "
             "create_path().",
         )
 
-    async def process_post(self, ctx: Ctx) -> Any:
+    async def process_post(self, ctx: C) -> Any:
         raise NotImplementedError(
             f"{type(self).__name__} handles POST but does not implement "
             "process_post() (or set post_is_create).",
         )
 
     # --- G7-false branch: the resource does not (currently) exist ----------
-    async def previously_existed(self, ctx: Ctx) -> bool:  # K7
+    async def previously_existed(self, ctx: C) -> bool:  # K7
         # True routes a missing resource to redirect/gone handling.
         return False
 
-    async def moved_permanently(self, ctx: Ctx) -> str | None:  # K5 -> 301
+    async def moved_permanently(self, ctx: C) -> str | None:  # K5 -> 301
         return None
 
-    async def moved_temporarily(self, ctx: Ctx) -> str | None:  # L5 -> 307
+    async def moved_temporarily(self, ctx: C) -> str | None:  # L5 -> 307
         return None
 
     # --- schema (§10) ------------------------------------------------------

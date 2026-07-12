@@ -74,11 +74,11 @@ class ResourceDescription:
 _PARAM_RE = re.compile(r"\{([^}:]+)(?::[^}]+)?\}")
 
 
-def _overrides(resource: Resource, name: str) -> bool:
+def _overrides(resource: Resource[Any], name: str) -> bool:
     return getattr(type(resource), name) is not getattr(Resource, name)
 
 
-def _auto_error_statuses(resource: Resource, method: str) -> set[int]:
+def _auto_error_statuses(resource: Resource[Any], method: str) -> set[int]:
     """The candidate error statuses for ``method``, from overridden callbacks."""
 
     statuses: set[int] = set()
@@ -174,7 +174,7 @@ def _model_hint(func: object, key: str) -> type | None:
 def _operation(
     method: str,
     declared: Operation | None,
-    resource: Resource,
+    resource: Resource[Any],
     params: list[dict[str, Any]],
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
@@ -217,7 +217,7 @@ def generate_openapi(
     *,
     title: str,
     version: str,
-    routes: Sequence[tuple[str, Resource]],
+    routes: Sequence[tuple[str, Resource[Any]]],
     security_schemes: Mapping[str, dict[str, Any]] | None = None,
     security: Sequence[str] | None = None,
 ) -> dict[str, Any]:

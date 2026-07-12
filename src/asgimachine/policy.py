@@ -14,10 +14,9 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
-if TYPE_CHECKING:
-    from .resource import Ctx
+from .resource import Ctx
 
 
 class Effect(Enum):
@@ -34,35 +33,36 @@ class Decision:
 
 
 @runtime_checkable
-class Policy(Protocol):
-    async def evaluate(self, ctx: Ctx) -> Decision: ...
+class Policy[C: Ctx](Protocol):
+    async def evaluate(self, ctx: C) -> Decision: ...
 
 
 # A rule fires with an Effect, or returns None to abstain (let later rules decide).
-Rule = Callable[["Ctx"], Awaitable["Effect | None"]]
+type Rule[C: Ctx] = Callable[[C], Awaitable[Effect | None]]
 
 
 @dataclass(frozen=True, slots=True)
-class NamedRule:
+class NamedRule[C: Ctx]:
     name: str
-    check: Rule
+    check: Callable[[C], Awaitable[Effect | None]]
 
 
-class RuleEngine:
+class RuleEngine[C: Ctx = Ctx]:
     """Ordered Allow/Deny rule engine; first matching rule wins (§7).
 
-    ``default`` decides when no rule fires (deny-by-default is the safe choice).
+    Generic over the resource's context type ``C`` so rules see typed
+    ``ctx``. ``default`` decides when no rule fires (deny-by-default is safe).
     """
 
     __slots__ = ("_default", "_rules")
 
     def __init__(
-        self, rules: Sequence[NamedRule], *, default: Effect = Effect.DENY
+        self, rules: Sequence[NamedRule[C]], *, default: Effect = Effect.DENY
     ) -> None:
         self._rules = list(rules)
         self._default = default
 
-    async def evaluate(self, ctx: Ctx) -> Decision:
+    async def evaluate(self, ctx: C) -> Decision:
         for rule in self._rules:
             effect = await rule.check(ctx)
             if effect is not None:

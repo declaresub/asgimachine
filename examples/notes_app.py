@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import secrets
 from dataclasses import dataclass, field
+from typing import Any
 
 from pydantic import BaseModel
 from starlette.applications import Starlette
@@ -90,6 +91,21 @@ class Store:
         return f"n{self._seq}"
 
 
+# --- typed per-request contexts (§2.7) -------------------------------------
+
+
+@dataclass(slots=True)
+class NotesCtx(Ctx):
+    user: User | None = None
+    new_id: str = ""
+
+
+@dataclass(slots=True)
+class MemberCtx(Ctx):
+    user: User | None = None
+    note: Note | None = None
+
+
 # --- command lane: credential exchange -------------------------------------
 
 
@@ -141,15 +157,16 @@ class HealthResource(Resource):
         )
 
 
-class NotesCollection(Resource):
+class NotesCollection(Resource[NotesCtx]):
     """Collection: any authenticated user may list or create."""
 
     ALLOWED_METHODS = frozenset({"GET", "HEAD", "POST"})
+    context_class = NotesCtx
 
     def __init__(self, store: Store) -> None:
         self._store = store
 
-    async def is_authorized(self, ctx: Ctx) -> bool | str:
+    async def is_authorized(self, ctx: NotesCtx) -> bool | str:
         user = self._store.authenticate(ctx.request)
         if user is None:
             return "Bearer"
@@ -158,20 +175,20 @@ class NotesCollection(Resource):
 
     CONSUMES = ("application/json",)
 
-    async def post_is_create(self, ctx: Ctx) -> bool:
+    async def post_is_create(self, ctx: NotesCtx) -> bool:
         return True
 
-    async def create_path(self, ctx: Ctx) -> str:
-        note_id = self._store.new_id()
-        ctx.extra["new_id"] = note_id
-        return f"/notes/{note_id}"
+    async def create_path(self, ctx: NotesCtx) -> str:
+        ctx.new_id = self._store.new_id()
+        return f"/notes/{ctx.new_id}"
 
-    async def apply(self, ctx: Ctx, body: NoteInput) -> None:
-        note_id = ctx.extra["new_id"]
-        self._store.notes[note_id] = Note(note_id, ctx.user.username, body.text)
+    async def apply(self, ctx: NotesCtx, body: NoteInput) -> None:
+        assert ctx.user is not None  # is_authorized ran first
+        self._store.notes[ctx.new_id] = Note(ctx.new_id, ctx.user.username, body.text)
         return None
 
-    async def represent(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: NotesCtx) -> object:
+        assert ctx.user is not None
         mine = [n for n in self._store.notes.values() if n.owner == ctx.user.username]
         return {"notes": [{"id": n.id, "text": n.text} for n in mine]}
 
@@ -185,53 +202,57 @@ class NotesCollection(Resource):
         )
 
 
-class NoteMember(Resource):
+class NoteMember(Resource[MemberCtx]):
     """Member: read for any authenticated user; write governed by the policy."""
 
     ALLOWED_METHODS = frozenset({"GET", "HEAD", "PUT", "DELETE"})
+    context_class = MemberCtx
 
-    def __init__(self, store: Store, policy: RuleEngine) -> None:
+    def __init__(self, store: Store, policy: RuleEngine[MemberCtx]) -> None:
         self._store = store
         self._policy = policy
 
-    async def is_authorized(self, ctx: Ctx) -> bool | str:
+    async def is_authorized(self, ctx: MemberCtx) -> bool | str:
         user = self._store.authenticate(ctx.request)
         if user is None:
             return "Bearer"
         ctx.user = user
         # Load the target now so the policy can authorize on ownership (B7 is
         # before G7, so authorization-relevant state must be loaded by here).
-        ctx.entity = self._store.notes.get(ctx.request.path_params["id"])
+        ctx.note = self._store.notes.get(ctx.request.path_params["id"])
         return True
 
-    async def forbidden(self, ctx: Ctx) -> bool:
+    async def forbidden(self, ctx: MemberCtx) -> bool:
         decision = await self._policy.evaluate(ctx)
         return not decision.allowed
 
-    async def resource_exists(self, ctx: Ctx) -> bool:
-        return ctx.entity is not None
+    async def resource_exists(self, ctx: MemberCtx) -> bool:
+        return ctx.note is not None
 
-    async def generate_etag(self, ctx: Ctx) -> str | None:
-        note: Note | None = ctx.entity
+    async def generate_etag(self, ctx: MemberCtx) -> str | None:
+        note = ctx.note
         return f'"{note.id}-{note.version}"' if note is not None else None
 
     CONSUMES = ("application/json",)
 
-    async def apply(self, ctx: Ctx, body: NoteInput) -> None:
-        note_id = ctx.request.path_params["id"]
-        if ctx.entity is None:  # PUT-create (reached the missing branch)
+    async def apply(self, ctx: MemberCtx, body: NoteInput) -> None:
+        assert ctx.user is not None
+        if ctx.note is None:  # PUT-create (reached the missing branch)
+            note_id = ctx.request.path_params["id"]
             self._store.notes[note_id] = Note(note_id, ctx.user.username, body.text)
         else:
-            ctx.entity.text = body.text
-            ctx.entity.version += 1
+            ctx.note.text = body.text
+            ctx.note.version += 1
         return None
 
-    async def delete_resource(self, ctx: Ctx) -> bool:
-        del self._store.notes[ctx.entity.id]
+    async def delete_resource(self, ctx: MemberCtx) -> bool:
+        assert ctx.note is not None  # resource_exists guaranteed it
+        del self._store.notes[ctx.note.id]
         return True
 
-    async def represent(self, ctx: Ctx) -> object:
-        note: Note = ctx.entity
+    async def represent(self, ctx: MemberCtx) -> object:
+        note = ctx.note
+        assert note is not None
         return {"id": note.id, "owner": note.owner, "text": note.text}
 
     def describe(self) -> ResourceDescription:
@@ -250,22 +271,21 @@ class NoteMember(Resource):
 # --- auth policy: ordered Allow/Deny rules (§7) -----------------------------
 
 
-async def _rule_admin(ctx: Ctx) -> Effect | None:
-    return Effect.ALLOW if ctx.user.role == "admin" else None
+async def _rule_admin(ctx: MemberCtx) -> Effect | None:
+    return Effect.ALLOW if ctx.user is not None and ctx.user.role == "admin" else None
 
 
-async def _rule_read(ctx: Ctx) -> Effect | None:
+async def _rule_read(ctx: MemberCtx) -> Effect | None:
     return Effect.ALLOW if ctx.request.method in {"GET", "HEAD"} else None
 
 
-async def _rule_owner(ctx: Ctx) -> Effect | None:
-    note: Note | None = ctx.entity
-    if note is not None and note.owner == ctx.user.username:
-        return Effect.ALLOW
+async def _rule_owner(ctx: MemberCtx) -> Effect | None:
+    if (note := ctx.note) is not None and ctx.user is not None:
+        return Effect.ALLOW if note.owner == ctx.user.username else None
     return None
 
 
-def build_policy() -> RuleEngine:
+def build_policy() -> RuleEngine[MemberCtx]:
     return RuleEngine(
         [
             NamedRule("admin", _rule_admin),
@@ -286,7 +306,7 @@ def seed_store() -> Store:
 class OpenApiCommand(Command):
     """Serves the app's own OpenAPI document, generated from the resources."""
 
-    def __init__(self, routes: list[tuple[str, Resource]]) -> None:
+    def __init__(self, routes: list[tuple[str, Resource[Any]]]) -> None:
         self._routes = routes
 
     async def handle(self, request: HttpRequest) -> HttpResponse:
@@ -304,7 +324,7 @@ class OpenApiCommand(Command):
 def make_app(store: Store | None = None, *, debug: bool = False) -> Starlette:
     store = store if store is not None else seed_store()
     policy = build_policy()
-    resource_pairs: list[tuple[str, Resource]] = [
+    resource_pairs: list[tuple[str, Resource[Any]]] = [
         ("/health", HealthResource()),
         ("/notes", NotesCollection(store)),
         ("/notes/{id}", NoteMember(store, policy)),

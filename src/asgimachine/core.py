@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import TYPE_CHECKING, cast, get_type_hints
+from typing import TYPE_CHECKING, Any, cast, get_type_hints
 
 from .codec import DEFAULT_CODECS
 from .conditional import (
@@ -37,7 +37,7 @@ BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 
 
 async def run(
-    resource: Resource,
+    resource: Resource[Any],
     request: HttpRequest,
     *,
     debug: bool = False,
@@ -50,7 +50,7 @@ async def run(
     is the media-type -> Codec registry (defaults to JSON only).
     """
 
-    ctx = Ctx(
+    ctx = resource.context_class(
         request=request, codecs=codecs if codecs is not None else dict(DEFAULT_CODECS)
     )
     try:
@@ -75,7 +75,7 @@ def _allow_header(methods: frozenset[str]) -> str:
     return ", ".join(sorted(methods | {"OPTIONS"}))
 
 
-async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
+async def _walk(resource: Resource[Any], ctx: Ctx) -> HttpResponse:
     request = ctx.request
     method = request.method
 
@@ -219,7 +219,7 @@ def _parse_body(structured: object, model_type: object) -> object:
     return structured
 
 
-def _apply_body_type(resource: Resource) -> object | None:
+def _apply_body_type(resource: Resource[Any]) -> object | None:
     """The declared type of apply()'s ``body`` param (for the semantic parse)."""
 
     try:
@@ -228,7 +228,7 @@ def _apply_body_type(resource: Resource) -> object | None:
         return None
 
 
-async def _apply(resource: Resource, ctx: Ctx) -> object:
+async def _apply(resource: Resource[Any], ctx: Ctx) -> object:
     """Decode + parse the request body (parse, don't validate) and run apply().
 
     The body is decoded by the negotiated codec and parsed into apply()'s
@@ -266,7 +266,7 @@ def _finish(
 
 
 async def _delete(
-    resource: Resource, ctx: Ctx, headers: dict[str, str]
+    resource: Resource[Any], ctx: Ctx, headers: dict[str, str]
 ) -> HttpResponse:
     # M16 DELETE? -> M20 delete_resource.
     if not await resource.delete_resource(ctx):
@@ -278,7 +278,7 @@ async def _delete(
 
 
 async def _post(
-    resource: Resource, ctx: Ctx, chosen: str, headers: dict[str, str]
+    resource: Resource[Any], ctx: Ctx, chosen: str, headers: dict[str, str]
 ) -> HttpResponse:
     # N16 POST? -> N11 post_is_create?
     if await resource.post_is_create(ctx):
@@ -294,7 +294,7 @@ async def _post(
 
 
 async def _write(
-    resource: Resource, ctx: Ctx, chosen: str, headers: dict[str, str]
+    resource: Resource[Any], ctx: Ctx, chosen: str, headers: dict[str, str]
 ) -> HttpResponse:
     # O16 PUT/PATCH -> O14 is_conflict? -> 409, else apply the acceptor.
     if await resource.is_conflict(ctx):
@@ -305,7 +305,7 @@ async def _write(
 
 
 async def _handle_missing(
-    resource: Resource, ctx: Ctx, method: str, chosen: str
+    resource: Resource[Any], ctx: Ctx, method: str, chosen: str
 ) -> HttpResponse:
     """The G7-false branch: create (PUT), redirect/gone (previously_existed), 404."""
 
@@ -389,7 +389,7 @@ async def _check_preconditions(
 
 
 async def _vary_headers(
-    resource: Resource, ctx: Ctx, offered: list[str]
+    resource: Resource[Any], ctx: Ctx, offered: list[str]
 ) -> dict[str, str]:
     """Build the ``Vary`` header from resource variances + Accept-negotiation."""
 
@@ -399,7 +399,7 @@ async def _vary_headers(
     return {"Vary": ", ".join(names)} if names else {}
 
 
-async def _cache_headers(resource: Resource, ctx: Ctx) -> dict[str, str]:
+async def _cache_headers(resource: Resource[Any], ctx: Ctx) -> dict[str, str]:
     """Build Expires / Cache-Control from the resource's caching callbacks (v3)."""
 
     result: dict[str, str] = {}

@@ -177,6 +177,19 @@ receives a typed value and is total over it, rather than re-parsing a loose dict
 `malformed_request` survives only as an escape hatch for untyped handlers and
 cross-field checks the type can't express.
 
+And the same principle applied to the **context**: webmachine's `Context` is an
+opaque bag with hardcoded slots. Base `Ctx` here is instead minimal and
+domain-agnostic (request, trace, negotiation result, codecs, an `extra` bag) — a
+principal and the loaded entity are *domain* concepts, not the framework's. A
+resource that wants typed per-request state **subclasses `Ctx`** and declares it:
+`Resource` is generic over its context type (`Resource[C: Ctx = Ctx]`, every
+callback taking `ctx: C`), and a public `context_class` attribute names the
+subclass the core constructs. Plain `Resource` gets base `Ctx`; typed resources
+write `class M(Resource[MemberCtx])` + `context_class = MemberCtx` and read
+`ctx.user`/`ctx.note` with the checker's help. (Fields are `T | None` until the
+graph sets them — the set-then-read ordering is the resource's invariant to
+state, not a framework promise.)
+
 ---
 
 ## 3. Architecture

@@ -8,7 +8,7 @@ a ``Starlette`` app that routes to resources through :func:`core.run`.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -81,7 +81,7 @@ class _ResourceEndpoint:
 
     __slots__ = ("_codecs", "_resource")
 
-    def __init__(self, resource: Resource, codecs: dict[str, Codec] | None) -> None:
+    def __init__(self, resource: Resource[Any], codecs: dict[str, Codec] | None) -> None:
         self._resource = resource
         self._codecs = codecs
 
@@ -99,7 +99,7 @@ class _ResourceEndpoint:
 
 
 def resource_route(
-    path: str, resource: Resource, *, codecs: dict[str, Codec] | None = None
+    path: str, resource: Resource[Any], *, codecs: dict[str, Codec] | None = None
 ) -> Route:
     """Build a Starlette ``Route`` that runs ``resource`` through the graph.
 

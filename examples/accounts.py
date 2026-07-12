@@ -10,7 +10,7 @@ the real collaborators; a test wires fakes. Run with:
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from asgimachine.resource import Ctx, Resource
 from asgimachine.substrate.starlette import build_app, resource_route
@@ -28,15 +28,24 @@ class User:
     id: str
 
 
+@dataclass(slots=True)
+class AccountsCtx(Ctx):
+    """Typed per-request state for this resource — the graph fills it in."""
+
+    user: User | None = None
+    accounts: list[Account] = field(default_factory=list[Account])
+
+
 # Collaborator types, wired at the composition root.
 Authenticator = Callable[["Ctx"], Awaitable[User | None]]
 AccountStore = Callable[[str], Awaitable[list[Account]]]
 
 
-class AccountsResource(Resource):
+class AccountsResource(Resource[AccountsCtx]):
     """GET/HEAD the authenticated user's accounts, with conditional GET."""
 
     ALLOWED_METHODS = frozenset({"GET", "HEAD"})
+    context_class = AccountsCtx
 
     def __init__(
         self, retrieve_accounts_for_user: AccountStore, authenticate: Authenticator
@@ -44,22 +53,24 @@ class AccountsResource(Resource):
         self._retrieve = retrieve_accounts_for_user
         self._authenticate = authenticate
 
-    async def is_authorized(self, ctx: Ctx) -> bool | str:
+    async def is_authorized(self, ctx: AccountsCtx) -> bool | str:
         user = await self._authenticate(ctx)
         if user is None:
             return "Bearer"  # -> 401 WWW-Authenticate: Bearer
         ctx.user = user
         return True
 
-    async def resource_exists(self, ctx: Ctx) -> bool:
-        ctx.entity = await self._retrieve(ctx.user.id)
+    async def resource_exists(self, ctx: AccountsCtx) -> bool:
+        assert ctx.user is not None  # set by is_authorized, which runs first
+        ctx.accounts = await self._retrieve(ctx.user.id)
         return True
 
-    async def generate_etag(self, ctx: Ctx) -> str | None:
-        return f'W/"accounts-{ctx.user.id}-{len(ctx.entity)}"'
+    async def generate_etag(self, ctx: AccountsCtx) -> str | None:
+        assert ctx.user is not None
+        return f'W/"accounts-{ctx.user.id}-{len(ctx.accounts)}"'
 
-    async def represent(self, ctx: Ctx) -> object:
-        return {"data": [asdict(account) for account in ctx.entity]}
+    async def represent(self, ctx: AccountsCtx) -> object:
+        return {"data": [asdict(account) for account in ctx.accounts]}
 
 
 # --- composition root: real collaborators ---------------------------------

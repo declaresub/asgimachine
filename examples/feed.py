@@ -43,38 +43,44 @@ class Outbox:
         return self.events[start : start + PAGE_SIZE]
 
 
-class FeedResource(Resource):
+@dataclass(slots=True)
+class FeedCtx(Ctx):
+    page: int = 0
+    events: list[str] = field(default_factory=list[str])
+
+
+class FeedResource(Resource[FeedCtx]):
     ALLOWED_METHODS = frozenset({"GET", "HEAD"})
+    context_class = FeedCtx
 
     def __init__(self, outbox: Outbox) -> None:
         self._outbox = outbox
 
-    async def resource_exists(self, ctx: Ctx) -> bool:
+    async def resource_exists(self, ctx: FeedCtx) -> bool:
         page = _parse_page(ctx.request.path_params.get("page"))
         if page is None or not (0 <= page <= self._outbox.head_page):
             return False
-        ctx.extra["page"] = page
-        ctx.entity = self._outbox.page(page)
+        ctx.page = page
+        ctx.events = self._outbox.page(page)
         return True
 
-    def _archived(self, ctx: Ctx) -> bool:
+    def _archived(self, ctx: FeedCtx) -> bool:
         # A page below the head page is full and immutable.
-        return ctx.extra["page"] < self._outbox.head_page
+        return ctx.page < self._outbox.head_page
 
-    async def generate_etag(self, ctx: Ctx) -> str | None:
-        page = ctx.extra["page"]
+    async def generate_etag(self, ctx: FeedCtx) -> str | None:
         if self._archived(ctx):
-            return f'"feed-{page}"'  # immutable content -> the id is the validator
-        return f'"feed-{page}-{len(ctx.entity)}"'  # head page grows
+            return f'"feed-{ctx.page}"'  # immutable content -> the id is the validator
+        return f'"feed-{ctx.page}-{len(ctx.events)}"'  # head page grows
 
-    async def cache_control(self, ctx: Ctx) -> str | None:
+    async def cache_control(self, ctx: FeedCtx) -> str | None:
         return IMMUTABLE if self._archived(ctx) else "no-cache"
 
-    async def represent(self, ctx: Ctx) -> object:
+    async def represent(self, ctx: FeedCtx) -> object:
         return {
-            "page": ctx.extra["page"],
+            "page": ctx.page,
             "archived": self._archived(ctx),
-            "events": ctx.entity,
+            "events": ctx.events,
         }
 
 
