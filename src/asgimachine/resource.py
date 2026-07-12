@@ -58,7 +58,7 @@ class Resource[C: Ctx = Ctx]:
 
     # The Ctx (sub)class the core constructs for each request. Declare a subclass
     # alongside ``Resource[MyCtx]`` when a resource needs typed per-request state.
-    context_class: type[Ctx] = Ctx
+    context_class: ClassVar[type[Ctx]] = Ctx
 
     async def lifespan(self, ctx: C) -> AsyncGenerator[None]:
         """Per-request setup/teardown, wrapping the whole graph walk.
@@ -190,7 +190,7 @@ class Resource[C: Ctx = Ctx]:
 
     # The mirror of PRODUCES on the write side: request Content-Types this
     # resource accepts. Empty by default (a read-only resource declares none).
-    CONSUMES: tuple[str, ...] = ()
+    CONSUMES: ClassVar[tuple[str, ...]] = ()
 
     async def apply(self, ctx: C, body: Any) -> Any:
         # The write handler for PUT/PATCH/POST-create. The core decodes the
