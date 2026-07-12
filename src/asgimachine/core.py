@@ -81,6 +81,7 @@ async def run(
             response = await _walk(resource, ctx)
         except HaltResponse as halt:
             response = halt.response
+            await _apply_error_body(resource, ctx, response)
         if debug:
             response.headers[TRACE_HEADER] = ctx.trace.header_value
         if response.is_stream:
@@ -186,6 +187,32 @@ def _halt(
 ) -> HaltResponse:
     ctx.trace.record(node, int(status))
     return HaltResponse(HttpResponse(status=int(status), headers=headers or {}))
+
+
+async def _apply_error_body(
+    resource: Resource[Any], ctx: Ctx, response: HttpResponse
+) -> None:
+    """Give a 4xx/5xx halt an error body (default: RFC 9457 problem+json), §4 v4.
+
+    The error representation is negotiated over ``ERROR_PRODUCES`` — separately
+    from the main C3/C4 pass, which may have failed (406) or not run (401) — with
+    a serve-anyway fallback, since an error must always carry a body. Redirects and
+    304 (status < 400) keep empty bodies; HEAD sends headers only.
+    """
+
+    if response.status < 400 or response.body:
+        return
+    offered = list(resource.ERROR_PRODUCES)
+    if not offered:
+        return
+    media = choose_media_type(ctx.request.headers.get("accept"), offered) or offered[0]
+    value = await resource.error_body(ctx, response.status, media)
+    if value is None:
+        return
+    response.headers.setdefault("Content-Type", media)
+    if ctx.request.method != "HEAD":
+        codec = ctx.codecs.get(media)
+        response.body = codec.encode(value) if codec is not None else serialize(value)
 
 
 def _allow_header(methods: frozenset[str]) -> str:

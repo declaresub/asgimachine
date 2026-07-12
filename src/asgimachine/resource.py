@@ -15,9 +15,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from http import HTTPStatus
+
 from .http import DEFAULT_MAX_BODY_BYTES
 from .negotiation import parse_content_type
 from .trace import Trace
+
+
+def _reason(status: int) -> str:
+    try:
+        return HTTPStatus(status).phrase
+    except ValueError:
+        return ""
+
 
 if TYPE_CHECKING:
     from .codec import Codec
@@ -174,6 +184,20 @@ class Resource[C: Ctx = Ctx]:
         # Vary. The core adds "Accept" automatically when more than one media
         # type is offered, so only list additional axes (e.g. an auth header).
         return []
+
+    # --- error bodies (§4 v4, RFC 9457) ------------------------------------
+    # Media types offered for *error* bodies (4xx/5xx), negotiated against Accept
+    # separately from PRODUCES — the main negotiation may have failed (406) or not
+    # run yet (401 before C4). Declare more (e.g. add "text/html") + a codec to
+    # serve browsers HTML errors; an unmatched Accept falls back to the first.
+    ERROR_PRODUCES: ClassVar[tuple[str, ...]] = ("application/problem+json",)
+
+    async def error_body(self, ctx: C, status: int, media_type: str) -> Any | None:
+        # The body for a 4xx/5xx response, encoded as ``media_type`` (the
+        # negotiated error representation). Default: an RFC 9457 problem detail.
+        # Override to add ``detail``/``instance``/custom members, render per
+        # ``media_type``, or return None for an empty body.
+        return {"type": "about:blank", "title": _reason(status), "status": status}
 
     # --- write path (§4 v2) -----------------------------------------------
     # Body-validation nodes. Traversed only for body-bearing methods

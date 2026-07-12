@@ -292,11 +292,16 @@ concrete need appears.
   default `False` preserves the hard 406. (Applies to `Accept` only — the
   `Accept-Language`/`Charset`/`Encoding` axes aren't negotiated yet.)
 - **Alternative-response-body negotiation** (the diagram's `is response
-  alternative` → `alternative … to content` tail). It content-negotiates the
-  *response body itself* (an error body, a 300 document) as a second, smaller
-  negotiation after the outcome is chosen. No webmachine analog; maps onto our
-  `multiple_choices` (300) and the codec layer's error representations — the right
-  frame for "the error/300 body is itself negotiated."
+  alternative` → `alternative … to content` tail). ✅ *Done* (as **error bodies**).
+  Every 4xx/5xx halt now carries a body, negotiated over `ERROR_PRODUCES` *after*
+  the outcome — a second pass separate from C3/C4, which may have failed (406) or
+  not run (401). Default: an **RFC 9457** `application/problem+json` detail
+  (`{type, title, status}`), on by default; overridable via the `error_body(ctx,
+  status, media_type)` hook and the `ERROR_PRODUCES` declaration (add `text/html`
+  + a codec → browsers get HTML errors). Serve-anyway fallback (an error always
+  gets a body); redirects/304 keep empty bodies; HEAD sends headers only. Produced
+  centrally in `run()`'s halt handler. (The 300 `multiple_choices` body keeps its
+  existing main-negotiated path.)
 - **Explicitly out of scope — rent, don't model:** Expect/`100-continue` (100 /
   417) is a transport handshake uvicorn/ASGI answers below us (§2.1); `428`/`431`
   are thin gates worth adding only on demand.
