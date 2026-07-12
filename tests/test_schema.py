@@ -6,6 +6,8 @@ path parameters, describe()-absent omission, and the app's /openapi.json route.
 
 from __future__ import annotations
 
+import json
+
 from pydantic import BaseModel
 from starlette.testclient import TestClient
 
@@ -38,9 +40,12 @@ def test_pydantic_model_becomes_json_schema() -> None:
     doc = generate_openapi(
         title="T", version="1", routes=[("/widget", WidgetResource())]
     )
-    schema = doc["paths"]["/widget"]["get"]["responses"]["200"]["content"][
+    ref = doc["paths"]["/widget"]["get"]["responses"]["200"]["content"][
         "application/json"
     ]["schema"]
+    # The model is hoisted into components and referenced, not inlined.
+    assert ref == {"$ref": "#/components/schemas/Widget"}
+    schema = doc["components"]["schemas"]["Widget"]
     assert set(schema["properties"]) == {"name", "size"}
     assert schema["properties"]["size"]["type"] == "integer"
 
@@ -256,10 +261,12 @@ class TypedResource(Resource):
 def test_models_derived_from_signatures() -> None:
     doc = generate_openapi(title="T", version="1", routes=[("/t", TypedResource())])
     op = doc["paths"]["/t"]
-    get_schema = op["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-    assert set(get_schema["properties"]) == {"name", "size"}
-    put_schema = op["put"]["requestBody"]["content"]["application/json"]["schema"]
-    assert set(put_schema["properties"]) == {"name", "size"}
+    get_ref = op["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    put_ref = op["put"]["requestBody"]["content"]["application/json"]["schema"]
+    # Both the read return and the write body resolve to the one Widget component.
+    assert get_ref == put_ref == {"$ref": "#/components/schemas/Widget"}
+    schema = doc["components"]["schemas"]["Widget"]
+    assert set(schema["properties"]) == {"name", "size"}
 
 
 def test_public_operation_overrides_security() -> None:
@@ -277,3 +284,74 @@ def test_public_operation_overrides_security() -> None:
         security=["bearerAuth"],
     )
     assert doc["paths"]["/p"]["get"]["security"] == []
+
+
+# --- components: nested-model hoisting + multi-content -----------------------
+
+
+class Address(BaseModel):
+    city: str
+
+
+class Person(BaseModel):
+    name: str
+    address: Address
+
+
+class NestedResource(Resource):
+    async def represent(self, ctx: Ctx) -> Person:
+        return Person(name="x", address=Address(city="y"))
+
+    def describe(self) -> ResourceDescription:
+        return ResourceDescription(get=Operation(responses={200: Person}))
+
+
+def test_nested_models_hoisted_into_components() -> None:
+    doc = generate_openapi(title="T", version="1", routes=[("/p", NestedResource())])
+    schemas = doc["components"]["schemas"]
+    # Both the root and its nested model land in components, referenced by $ref.
+    assert {"Person", "Address"} <= set(schemas)
+    assert "$defs" not in schemas["Person"]
+    ref = doc["paths"]["/p"]["get"]["responses"]["200"]["content"]["application/json"][
+        "schema"
+    ]
+    assert ref == {"$ref": "#/components/schemas/Person"}
+    # No dangling #/$defs/ refs survive; the nested ref points into components.
+    body = json.dumps(doc)
+    assert "#/$defs/" not in body
+    assert "#/components/schemas/Address" in body
+
+
+class MultiMediaResource(Resource):
+    ALLOWED_METHODS = frozenset({"GET", "PUT"})
+    PRODUCES = ("application/json", "application/cbor")
+    CONSUMES = ("application/json", "application/cbor")
+
+    async def represent(self, ctx: Ctx) -> object:
+        return {}
+
+    async def apply(self, ctx: Ctx, body: Widget) -> None:
+        return None
+
+    def describe(self) -> ResourceDescription:
+        return ResourceDescription(
+            get=Operation(responses={200: {"type": "object"}}),
+            put=Operation(responses={204: None}),
+        )
+
+
+def test_content_types_follow_produces_and_consumes() -> None:
+    doc = generate_openapi(
+        title="T", version="1", routes=[("/m", MultiMediaResource())]
+    )
+    op = doc["paths"]["/m"]
+    assert set(op["get"]["responses"]["200"]["content"]) == {
+        "application/json",
+        "application/cbor",
+    }
+    assert set(op["put"]["requestBody"]["content"]) == {
+        "application/json",
+        "application/cbor",
+    }
+    # Error responses (no body) carry no content regardless of PRODUCES.
+    assert "content" not in op["put"]["responses"]["415"]

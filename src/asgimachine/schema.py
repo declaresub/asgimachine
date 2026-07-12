@@ -7,20 +7,25 @@ itself a schema of outcomes:
   shape, not behavior). ``describe()`` no longer repeats the method list.
 - **The error/status surface is auto-derived** from which callbacks a subclass
   overrides: override ``is_authorized`` and you get 401; ``forbidden`` → 403;
-  ``resource_exists`` → 404; ``content_types_accepted`` → 415/400; ``generate_etag``
+  ``resource_exists`` → 404; a declared ``CONSUMES`` → 415/400; ``generate_etag``
   → 304/412; and so on, method-aware. So ``describe()`` declares only the
   *success* bodies and the generator fills in the errors.
+- **Media types** come from the declarations too: a response body is offered in
+  every ``PRODUCES`` type and a request body accepts every ``CONSUMES`` type, so
+  a content-negotiating resource documents each variant without repeating itself.
 - **Security** is declared: pass ``security_schemes`` + a document-level
   ``security`` default; a per-operation ``Operation.security`` overrides it
   (``[]`` marks a public operation).
 
 Pydantic is optional (a model with ``model_json_schema()`` is converted, a raw
-JSON-Schema dict is used as-is). A route without a ``describe()`` is absent from
-the schema — acceptable during incremental adoption (§10).
+JSON-Schema dict is used as-is). A converted model is hoisted into
+``components.schemas`` and referenced by ``$ref`` — so a model shared across
+operations (or nested inside another) is emitted once and deduped. A route
+without a ``describe()`` is absent from the schema — acceptable during
+incremental adoption (§10).
 
 Known limits (first cut): the auto-error mapping is a documented heuristic, not a
-proof; no examples or response-header declarations; model ``$defs`` are inlined
-per-operation rather than deduped into ``components``; the command lane is out of
+proof; no examples or response-header declarations; the command lane is out of
 scope (graph routes only).
 """
 
@@ -110,35 +115,58 @@ def _auto_error_statuses(resource: Resource[Any], method: str) -> set[int]:
     return statuses
 
 
-def _schema_for(model: Model | None) -> dict[str, Any] | None:
+def _pydantic_schema(model: type, components: dict[str, Any]) -> dict[str, Any]:
+    """Hoist a Pydantic model (and its nested ``$defs``) into ``components`` and
+    return a ``$ref`` to it — so a model shared across operations is deduped."""
+
+    method = getattr(model, "model_json_schema", None)
+    result = method(ref_template="#/components/schemas/{model}") if callable(method) else None
+    if not isinstance(result, dict):
+        return {"type": "object"}
+    raw = cast("dict[str, Any]", result)
+    # Nested models arrive under $defs, already ref'd into components/schemas.
+    for name, sub in cast("dict[str, Any]", raw.pop("$defs", {})).items():
+        components.setdefault(name, sub)
+    # A self-referential root is itself a bare $ref (already in components).
+    if set(raw) == {"$ref"}:
+        return raw
+    components.setdefault(model.__name__, raw)
+    return {"$ref": f"#/components/schemas/{model.__name__}"}
+
+
+def _schema_for(model: Model | None, components: dict[str, Any]) -> dict[str, Any] | None:
     if model is None:
         return None
     if isinstance(model, dict):
         return model
-    model_json_schema = getattr(model, "model_json_schema", None)
-    if callable(model_json_schema):
-        result = model_json_schema()
-        return (
-            cast("dict[str, Any]", result)
-            if isinstance(result, dict)
-            else {"type": "object"}
-        )
-    return {"type": "object"}
+    return _pydantic_schema(model, components)
 
 
-def _content(model: Model | None) -> dict[str, Any]:
-    schema = _schema_for(model)
+def _media(types: Sequence[str]) -> Sequence[str]:
+    # A resource always offers at least JSON, even if it declared none.
+    return types or ("application/json",)
+
+
+def _content(
+    model: Model | None, media_types: Sequence[str], components: dict[str, Any]
+) -> dict[str, Any]:
+    schema = _schema_for(model, components)
     if schema is None:
         return {}
-    return {"content": {"application/json": {"schema": schema}}}
+    return {"content": {mt: {"schema": schema} for mt in _media(media_types)}}
 
 
-def _response(status: int, model: Model | None) -> dict[str, Any]:
+def _response(
+    status: int,
+    model: Model | None,
+    media_types: Sequence[str],
+    components: dict[str, Any],
+) -> dict[str, Any]:
     try:
         description = HTTPStatus(status).phrase
     except ValueError:
         description = ""
-    return {"description": description, **_content(model)}
+    return {"description": description, **_content(model, media_types, components)}
 
 
 def _parameters(path: str) -> list[dict[str, Any]]:
@@ -176,6 +204,7 @@ def _operation(
     declared: Operation | None,
     resource: Resource[Any],
     params: list[dict[str, Any]],
+    components: dict[str, Any],
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
     if declared is not None and declared.summary is not None:
@@ -183,24 +212,30 @@ def _operation(
     if params:
         result["parameters"] = params
 
-    # requestBody: declared, else derived from apply()'s typed body param.
+    # requestBody: declared, else derived from apply()'s typed body param. It is
+    # offered in every CONSUMES media type.
     request = declared.request if declared is not None else None
     if request is None and method.upper() in _BODY_METHODS:
         request = _model_hint(type(resource).apply, "body")
     if request is not None:
-        result["requestBody"] = {"required": True, **_content(request)}
+        result["requestBody"] = {
+            "required": True,
+            **_content(request, resource.CONSUMES, components),
+        }
 
+    # Response bodies are offered in every PRODUCES media type.
+    produces = resource.PRODUCES
     responses: dict[str, Any] = {}
     declared_responses = (declared.responses if declared is not None else None) or {}
     for status, model in declared_responses.items():
-        responses[str(status)] = _response(status, model)
+        responses[str(status)] = _response(status, model, produces, components)
     # 200 for a read: declared, else derived from represent()'s return type.
     if method.upper() in _READ_METHODS and "200" not in responses:
         derived = _model_hint(type(resource).represent, "return")
         if derived is not None:
-            responses["200"] = _response(200, derived)
+            responses["200"] = _response(200, derived, produces, components)
     for status in sorted(_auto_error_statuses(resource, method.upper())):
-        responses.setdefault(str(status), _response(status, None))
+        responses.setdefault(str(status), _response(status, None, produces, components))
     if not responses:
         # A method in ALLOWED_METHODS with nothing declared or derived: keep the
         # document valid (OpenAPI requires a non-empty responses object).
@@ -229,6 +264,7 @@ def generate_openapi(
     """
 
     paths: dict[str, Any] = {}
+    schemas: dict[str, Any] = {}  # models hoisted here, deduped, referenced by $ref
     for path, resource in routes:
         description = resource.describe()
         if description is None:
@@ -246,7 +282,7 @@ def generate_openapi(
             if method.upper() not in resource.ALLOWED_METHODS:
                 continue
             path_item[method] = _operation(
-                method, declared_ops[method], resource, params
+                method, declared_ops[method], resource, params, schemas
             )
         if path_item:
             paths[path] = path_item
@@ -258,6 +294,11 @@ def generate_openapi(
     }
     if security is not None:
         document["security"] = [{name: []} for name in security]
+    components: dict[str, Any] = {}
+    if schemas:
+        components["schemas"] = schemas
     if security_schemes is not None:
-        document["components"] = {"securitySchemes": dict(security_schemes)}
+        components["securitySchemes"] = dict(security_schemes)
+    if components:
+        document["components"] = components
     return document
