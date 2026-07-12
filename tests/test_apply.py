@@ -99,3 +99,33 @@ def test_malformed_json_is_400() -> None:
         "/w", content=b"{not json", headers={"content-type": "application/json"}
     )
     assert resp.status_code == 400
+
+
+class _RecursionCodec:
+    """A codec whose decode raises RecursionError — the deterministic stand-in for
+    deeply nested JSON (``json.loads`` on ~500k-deep input raises RecursionError,
+    verified). RecursionError is not a ValueError, so before the fix it escaped the
+    parse boundary as a 500 instead of a 400."""
+
+    def encode(self, value: object) -> bytes:
+        return b"{}"
+
+    def decode(self, raw: bytes) -> object:
+        raise RecursionError("maximum recursion depth exceeded")
+
+
+def test_recursion_error_on_decode_is_400() -> None:
+    client = make_client(
+        build_app(
+            [
+                resource_route(
+                    "/w",
+                    WidgetResource(),
+                    codecs={"application/json": _RecursionCodec()},
+                )
+            ],
+            debug=True,
+        )
+    )
+    resp = client.put("/w", json={"name": "cog", "qty": 3})
+    assert resp.status_code == 400  # a malformed (too-deep) body, not a 500
