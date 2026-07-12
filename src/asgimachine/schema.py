@@ -95,8 +95,10 @@ def _auto_error_statuses(resource: Resource[Any], method: str) -> set[int]:
         statuses.add(451)
     if method in _EXISTENCE_METHODS and _overrides(resource, "resource_exists"):
         statuses.add(404)
-    if method in _READ_METHODS:
-        statuses.add(406)  # content negotiation always runs for a representation
+    if method in _READ_METHODS and not resource.IGNORE_UNACCEPTABLE:
+        # Negotiation runs for a representation — unless the resource declares it
+        # disregards an unsatisfiable Accept (serves the default instead of 406).
+        statuses.add(406)
     if method in _BODY_METHODS:
         if resource.CONSUMES:
             # A parsed body -> 415 (unknown Content-Type) + 400 (parse failure).

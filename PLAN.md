@@ -284,11 +284,13 @@ concrete need appears.
   `permanent_redirect` callback at node **K5a**, checked after `moved_permanently`
   (K5/301, unchanged) in the missing-resource branch. 301 keeps precedence when
   both are set, so existing callers are untouched.
-- **Serve-anyway negotiation** (`ignore accept block mismatches`). Today an
-  unacceptable `Accept` is a hard 406 at C4. The diagram lets a resource *opt to
-  ignore* the mismatch and serve a default representation — a genuinely useful
-  escape we lack. Shape: an `ignore_unacceptable(ctx) -> bool` callback, default
-  `False` (preserving 406).
+- **Serve-anyway negotiation** (`ignore accept block mismatches`). ✅ *Done* —
+  node **C4a** (RFC 9110 §12.1): when `Accept` can't be satisfied, a resource that
+  declares `IGNORE_UNACCEPTABLE = True` disregards it and serves `PRODUCES[0]`
+  instead of 406. A declaration read through the thin `ignore_unacceptable(ctx)`
+  callback (§2.7), so the schema drops 406 from the surface when it is set;
+  default `False` preserves the hard 406. (Applies to `Accept` only — the
+  `Accept-Language`/`Charset`/`Encoding` axes aren't negotiated yet.)
 - **Alternative-response-body negotiation** (the diagram's `is response
   alternative` → `alternative … to content` tail). It content-negotiates the
   *response body itself* (an error body, a 300 document) as a second, smaller

@@ -263,10 +263,16 @@ async def _walk(resource: Resource[Any], ctx: Ctx) -> HttpResponse:
     # C3/C4 Accept -> media type -> 406
     offered = list(resource.PRODUCES)
     chosen = choose_media_type(request.headers.get("accept"), offered)
-    if chosen is None:
+    if chosen is not None:
+        ctx.trace.record("C4", chosen)
+    elif offered and await resource.ignore_unacceptable(ctx):
+        # C4a (v4, RFC 9110 §12.1): disregard an unsatisfiable Accept and serve
+        # the default representation instead of 406.
+        chosen = offered[0]
+        ctx.trace.record("C4a", chosen)
+    else:
         raise _halt(ctx, "C4", Status.NOT_ACCEPTABLE)
     ctx.chosen_media_type = chosen
-    ctx.trace.record("C4", chosen)
 
     # G7 resource_exists? -> the missing-resource branch (create / redirect / 404)
     if not await resource.resource_exists(ctx):
