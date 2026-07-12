@@ -81,7 +81,9 @@ class _ResourceEndpoint:
 
     __slots__ = ("_codecs", "_resource")
 
-    def __init__(self, resource: Resource[Any], codecs: dict[str, Codec] | None) -> None:
+    def __init__(
+        self, resource: Resource[Any], codecs: dict[str, Codec] | None
+    ) -> None:
         self._resource = resource
         self._codecs = codecs
 

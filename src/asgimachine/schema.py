@@ -120,7 +120,11 @@ def _pydantic_schema(model: type, components: dict[str, Any]) -> dict[str, Any]:
     return a ``$ref`` to it — so a model shared across operations is deduped."""
 
     method = getattr(model, "model_json_schema", None)
-    result = method(ref_template="#/components/schemas/{model}") if callable(method) else None
+    result = (
+        method(ref_template="#/components/schemas/{model}")
+        if callable(method)
+        else None
+    )
     if not isinstance(result, dict):
         return {"type": "object"}
     raw = cast("dict[str, Any]", result)
@@ -134,7 +138,9 @@ def _pydantic_schema(model: type, components: dict[str, Any]) -> dict[str, Any]:
     return {"$ref": f"#/components/schemas/{model.__name__}"}
 
 
-def _schema_for(model: Model | None, components: dict[str, Any]) -> dict[str, Any] | None:
+def _schema_for(
+    model: Model | None, components: dict[str, Any]
+) -> dict[str, Any] | None:
     if model is None:
         return None
     if isinstance(model, dict):

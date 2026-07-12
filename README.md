@@ -172,4 +172,4 @@ uv run ruff check .  # lint
 
 ## License
 
-MIT © Charles Constant
+MIT © Charles Yeomans
