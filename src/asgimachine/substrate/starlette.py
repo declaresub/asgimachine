@@ -16,7 +16,13 @@ from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
 from ..core import run
-from ..http import HttpResponse
+from ..http import (
+    DEFAULT_MAX_BODY_BYTES,
+    BodyMalformed,
+    BodyTooLarge,
+    HttpResponse,
+    Status,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -33,10 +39,12 @@ if TYPE_CHECKING:
 class _StarletteRequest:
     """Adapts a Starlette ``Request`` to the core's ``HttpRequest`` protocol."""
 
-    __slots__ = ("_request",)
+    __slots__ = ("_cached_body", "_max_bytes", "_request")
 
-    def __init__(self, request: Request) -> None:
+    def __init__(self, request: Request, max_bytes: int) -> None:
         self._request = request
+        self._max_bytes = max_bytes
+        self._cached_body: bytes | None = None
 
     @property
     def method(self) -> str:
@@ -55,8 +63,38 @@ class _StarletteRequest:
     def path_params(self) -> Mapping[str, str]:
         return self._request.path_params
 
+    def _declared_length(self) -> int | None:
+        raw = self._request.headers.get("content-length")
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None  # unparseable -> h11 already rejected it; treat as absent
+
     async def body(self) -> bytes:
-        return await self._request.body()
+        """Read the body, bounded at ``max_bytes`` (§6). Reads via ``stream`` so a
+        chunked or lying Content-Length can't blow past the cap, and verifies the
+        bytes read match a declared Content-Length (a mismatch is a framing error).
+        """
+
+        if self._cached_body is not None:
+            return self._cached_body
+        declared = self._declared_length()
+        # Fast reject an honest Content-Length over the cap, before reading.
+        if declared is not None and declared > self._max_bytes:
+            raise BodyTooLarge
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in self._request.stream():
+            total += len(chunk)
+            if total > self._max_bytes:  # cap the actual read
+                raise BodyTooLarge
+            chunks.append(chunk)
+        if declared is not None and total != declared:
+            raise BodyMalformed  # length disagrees with Content-Length -> 400
+        self._cached_body = b"".join(chunks)
+        return self._cached_body
 
 
 class _ClosingStreamingResponse(StreamingResponse):
@@ -114,7 +152,7 @@ class _ResourceEndpoint:
         debug = bool(getattr(scope.get("app"), "debug", False))
         response = await run(
             self._resource,
-            _StarletteRequest(request),
+            _StarletteRequest(request, self._resource.MAX_BODY_BYTES),
             debug=debug,
             codecs=self._codecs,
         )
@@ -135,17 +173,30 @@ def resource_route(
 
 
 def command_route(
-    path: str, command: Command, *, methods: Sequence[str] = ("POST",)
+    path: str,
+    command: Command,
+    *,
+    methods: Sequence[str] = ("POST",),
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
 ) -> Route:
     """Build a ``Route`` for a command (plain-handler lane, §2.5).
 
     Unlike a resource, a command does not walk the graph, so the router owns
     method restriction here (405 for an unlisted method) — that's fine for a
-    command-shaped endpoint.
+    command-shaped endpoint. ``max_body_bytes`` bounds the request body (the graph
+    lane gets this from the resource's ``MAX_BODY_BYTES``; a command has no
+    resource, so it is set here) — an over-cap body is 413, a Content-Length
+    mismatch 400.
     """
 
     async def endpoint(request: Request) -> Response:
-        return _to_starlette(await command.handle(_StarletteRequest(request)))
+        wrapped = _StarletteRequest(request, max_body_bytes)
+        try:
+            return _to_starlette(await command.handle(wrapped))
+        except BodyTooLarge:
+            return Response(status_code=int(Status.REQUEST_ENTITY_TOO_LARGE))
+        except BodyMalformed:
+            return Response(status_code=int(Status.BAD_REQUEST))
 
     endpoint.__name__ = type(command).__name__
     return Route(path, endpoint, methods=list(methods))

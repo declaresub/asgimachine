@@ -24,7 +24,14 @@ from .conditional import (
     modified_since,
     not_modified_since,
 )
-from .http import HaltResponse, HttpResponse, Status, serialize
+from .http import (
+    BodyMalformed,
+    BodyTooLarge,
+    HaltResponse,
+    HttpResponse,
+    Status,
+    serialize,
+)
 from .negotiation import choose_media_type, parse_content_type
 from .resource import Ctx
 from .trace import TRACE_HEADER
@@ -347,9 +354,21 @@ async def _apply(resource: Resource[Any], ctx: Ctx) -> object:
     if codec is None:
         raise _halt(ctx, "B5", Status.UNSUPPORTED_MEDIA_TYPE)
     try:
-        structured = codec.decode(await ctx.request.body())
+        raw = await ctx.request.body()
+    except BodyTooLarge:
+        # The read exceeded the resource's MAX_BODY_BYTES (a chunked/lying
+        # Content-Length that B4's header check couldn't catch up front).
+        raise _halt(ctx, "B4", Status.REQUEST_ENTITY_TOO_LARGE) from None
+    except BodyMalformed:
+        # Bytes read disagree with Content-Length — a framing error.
+        raise _halt(ctx, "B9", Status.BAD_REQUEST) from None
+    try:
+        structured = codec.decode(raw)
         body = _parse_body(structured, _apply_body_type(resource))
-    except ValueError, TypeError, UnicodeDecodeError:
+    except ValueError, TypeError, UnicodeDecodeError, RecursionError:
+        # RecursionError: deeply nested input (json.loads / a recursive model)
+        # exceeds the interpreter's depth — a malformed body, not a server fault,
+        # so 400 rather than an escaped 500.
         raise _halt(ctx, "P0", Status.BAD_REQUEST) from None
     ctx.trace.record("P0", True)
     return await resource.apply(ctx, body)

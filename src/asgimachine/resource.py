@@ -13,8 +13,9 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
+from .http import DEFAULT_MAX_BODY_BYTES
 from .negotiation import parse_content_type
 from .trace import Trace
 
@@ -169,8 +170,23 @@ class Resource[C: Ctx = Ctx]:
     async def valid_content_headers(self, ctx: C) -> bool:  # B6 -> 501
         return True
 
+    # B4 -> 413. The largest request body (bytes) this resource will accept.
+    # A declaration, not a callback: the graph rejects a larger declared
+    # Content-Length here, and the substrate caps the *actual* read at this value
+    # (the backstop for a chunked or lying Content-Length). Raise it for an
+    # upload resource; ``ClassVar`` so the checker forbids per-instance mutation.
+    MAX_BODY_BYTES: ClassVar[int] = DEFAULT_MAX_BODY_BYTES
+
     async def valid_entity_length(self, ctx: C) -> bool:  # B4 -> 413
-        return True
+        # Reject a declared Content-Length over the limit. Absent or unparseable
+        # Content-Length falls through to the substrate's read cap.
+        declared = ctx.request.headers.get("content-length")
+        if declared is None:
+            return True
+        try:
+            return int(declared) <= self.MAX_BODY_BYTES
+        except ValueError:
+            return True
 
     # The mirror of PRODUCES on the write side: request Content-Types this
     # resource accepts. Empty by default (a read-only resource declares none).
