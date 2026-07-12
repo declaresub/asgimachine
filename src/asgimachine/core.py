@@ -90,7 +90,7 @@ async def _walk(resource: Resource, ctx: Ctx) -> HttpResponse:
     ctx.trace.record("B12", True)
 
     # B10 method_allowed? -> 405 + Allow
-    allowed = resource.ALLOWED_METHODS
+    allowed = await resource.allowed_methods(ctx)
     ctx.allowed_methods = allowed
     allow = _allow_header(allowed)
     if method not in allowed and method != "OPTIONS":

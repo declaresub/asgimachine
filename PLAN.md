@@ -139,16 +139,25 @@ all-callbacks convention in a few places. All the breaks follow one rule:
 
 > **Static resource *shape* is a declaration; per-request *behavior* is a
 > callback.** A thing that cannot legitimately vary per request is a class
-> attribute, not an `async def`.
+> attribute (the source of truth and the schema anchor), not something computed
+> per request.
+
+Where an override escape hatch is still worth keeping, the graph reads the
+declaration through a *thin callback that defaults to it* — so the common case
+is a one-line class attribute, the schema reads the attribute statically, and
+per-request variation stays possible. `allowed_methods(ctx)` does this: it
+returns `self.ALLOWED_METHODS` by default; override it only for genuine
+per-request variation (the schema still documents `ALLOWED_METHODS`).
 
 The callbacks that remain (`resource_exists`, `is_authorized`, `forbidden`,
 `generate_etag`, `is_conflict`, …) are genuine per-request behavior. What moved
 to declarations:
 
-- **`ALLOWED_METHODS`** (was `allowed_methods`) — the supported methods. 405 is a
-  property of the target resource (RFC 9110 §15.5.6); per-principal gating is
-  `forbidden`/403, not a varying method set. A `frozenset`, mirroring
-  `KNOWN_METHODS`.
+- **`ALLOWED_METHODS`** (was the `allowed_methods` return value) — the supported
+  methods. 405 is a property of the target resource (RFC 9110 §15.5.6);
+  per-principal gating is `forbidden`/403, not a varying method set. A
+  `frozenset`, mirroring `KNOWN_METHODS`, read via the `allowed_methods()`
+  callback above.
 - **`PRODUCES`** (was `content_types_provided`) — the offered media types, in
   preference order. Encoding is split out to a media-type-keyed **codec** (§10);
   the resource builds one representation via `represent()` and the codec encodes

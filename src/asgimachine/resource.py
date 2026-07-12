@@ -56,9 +56,15 @@ class Resource:
 
     # B10 -> 405 + Allow. The set of methods this resource supports. Static shape,
     # not per-request behavior: 405 is a property of the target resource (RFC 9110
-    # §15.5.6), while per-principal gating belongs in `forbidden` (403). Set it on
-    # the class, or per-instance in __init__; the core reads it directly.
+    # §15.5.6), while per-principal gating belongs in `forbidden` (403). Declare
+    # it on the class (or per-instance in __init__); it is the schema anchor.
     ALLOWED_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
+
+    async def allowed_methods(self, ctx: Ctx) -> frozenset[str]:
+        # The graph reads the method set through this callback, defaulting to the
+        # ALLOWED_METHODS declaration. Override only for genuine per-request
+        # variation; the schema still documents ALLOWED_METHODS.
+        return self.ALLOWED_METHODS
 
     # --- B13 ---------------------------------------------------------------
     async def service_available(self, ctx: Ctx) -> bool:
