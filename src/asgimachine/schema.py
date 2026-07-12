@@ -91,6 +91,8 @@ def _auto_error_statuses(resource: Resource[Any], method: str) -> set[int]:
         statuses.add(401)
     if _overrides(resource, "forbidden"):
         statuses.add(403)
+    if _overrides(resource, "is_legally_restricted"):
+        statuses.add(451)
     if method in _EXISTENCE_METHODS and _overrides(resource, "resource_exists"):
         statuses.add(404)
     if method in _READ_METHODS:

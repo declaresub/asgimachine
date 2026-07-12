@@ -115,6 +115,11 @@ class Resource[C: Ctx = Ctx]:
     async def forbidden(self, ctx: C) -> bool:
         return False
 
+    # --- B7a (v4, httpdd) --------------------------------------------------
+    async def is_legally_restricted(self, ctx: C) -> bool:  # -> 451 (RFC 7725)
+        # True when the resource is denied for legal reasons (e.g. a takedown).
+        return False
+
     # --- G7 ----------------------------------------------------------------
     async def resource_exists(self, ctx: C) -> bool:
         return True
@@ -252,6 +257,11 @@ class Resource[C: Ctx = Ctx]:
         return False
 
     async def moved_permanently(self, ctx: C) -> str | None:  # K5 -> 301
+        return None
+
+    async def permanent_redirect(self, ctx: C) -> str | None:  # K5a -> 308 (v4)
+        # RFC 7538: a permanent redirect that *preserves the method* (301 does
+        # not). Prefer this over moved_permanently for non-idempotent targets.
         return None
 
     async def moved_temporarily(self, ctx: C) -> str | None:  # L5 -> 307
