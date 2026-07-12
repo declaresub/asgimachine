@@ -129,6 +129,45 @@ seam is real even before it's pretty. Formalize the protocol in M1. Do not build
 a second substrate until there is a concrete reason to (YAGNI); design so it's
 cheap when the reason arrives.
 
+### 2.7 Deliberate divergences from the canonical model
+"Canonical model" = the webmachine v3 decision diagram (§15) *and* its resource
+interface convention, in which everything a resource exposes to the graph is a
+per-request **callback** (`allowed_methods`, `content_types_provided`,
+`content_types_accepted`, …). We transcribe the **graph** faithfully — node
+labels and edges match the flowchart (§2.4) — but knowingly break from the
+all-callbacks convention in a few places. All the breaks follow one rule:
+
+> **Static resource *shape* is a declaration; per-request *behavior* is a
+> callback.** A thing that cannot legitimately vary per request is a class
+> attribute, not an `async def`.
+
+The callbacks that remain (`resource_exists`, `is_authorized`, `forbidden`,
+`generate_etag`, `is_conflict`, …) are genuine per-request behavior. What moved
+to declarations:
+
+- **`ALLOWED_METHODS`** (was `allowed_methods`) — the supported methods. 405 is a
+  property of the target resource (RFC 9110 §15.5.6); per-principal gating is
+  `forbidden`/403, not a varying method set. A `frozenset`, mirroring
+  `KNOWN_METHODS`.
+- **`PRODUCES`** (was `content_types_provided`) — the offered media types, in
+  preference order. Encoding is split out to a media-type-keyed **codec** (§10);
+  the resource builds one representation via `represent()` and the codec encodes
+  it N ways.
+- **`CONSUMES`** (was `content_types_accepted`) — the accepted request media
+  types. The write handler is a single `apply(ctx, body)`.
+
+Two payoffs justify the divergence: it's more RFC-correct (methods/media are
+resource properties), and it makes the surface **statically introspectable** —
+negotiation offers, the `Allow` header, 300 `multiple_choices`, and OpenAPI
+generation all read the declarations without calling a callback.
+
+One more break, on the request body: **parse, don't validate**. The core decodes
+the body via the negotiated codec and *parses* it into `apply`'s declared `body`
+type (a Pydantic `model_validate`; a failure is a 400 at node P0). `apply`
+receives a typed value and is total over it, rather than re-parsing a loose dict.
+`malformed_request` survives only as an escape hatch for untyped handlers and
+cross-field checks the type can't express.
+
 ---
 
 ## 3. Architecture
