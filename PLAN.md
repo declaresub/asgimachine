@@ -270,6 +270,36 @@ outbox/event-feed case. This is where the caching nodes pay off hardest:
 archived feed pages are `Cache-Control: immutable`, stable-ETag, 304-friendly,
 CDN-cacheable. (This is the endpoint class that most rewards the whole exercise.)
 
+### Phase v4 (backlog) — RFC-completeness from the http-decision-diagram
+Sourced from the for-GET **`http-decision-diagram`** (Andrei Neculau) — a more
+RFC-complete rewrite of webmachine's flowchart. Same spine as ours; every item
+below is *additive* — one more boolean callback with a correct default (§2.3), so
+none of it breaks the subset (§2.4). Not scheduled; a menu to draw from when a
+concrete need appears.
+
+- **`is_legally_restricted?` → 451** (RFC 7725). A trivial gate, natural neighbor
+  of `forbidden`/403.
+- **308 vs 301.** The diagram emits **308 Permanent Redirect** (RFC 7538) where
+  our K5 emits 301. Offer 308 (add `Status.PERMANENT_REDIRECT`); keep 301 for
+  callers that want the older semantics.
+- **Serve-anyway negotiation** (`ignore accept block mismatches`). Today an
+  unacceptable `Accept` is a hard 406 at C4. The diagram lets a resource *opt to
+  ignore* the mismatch and serve a default representation — a genuinely useful
+  escape we lack. Shape: an `ignore_unacceptable(ctx) -> bool` callback, default
+  `False` (preserving 406).
+- **Alternative-response-body negotiation** (the diagram's `is response
+  alternative` → `alternative … to content` tail). It content-negotiates the
+  *response body itself* (an error body, a 300 document) as a second, smaller
+  negotiation after the outcome is chosen. No webmachine analog; maps onto our
+  `multiple_choices` (300) and the codec layer's error representations — the right
+  frame for "the error/300 body is itself negotiated."
+- **Explicitly out of scope — rent, don't model:** Expect/`100-continue` (100 /
+  417) is a transport handshake uvicorn/ASGI answers below us (§2.1); `428`/`431`
+  are thin gates worth adding only on demand.
+
+Reference: `httpdd.fsm.png` in the repo above; see the `httpdd-diagram` memo for
+the full webmachine delta.
+
 ---
 
 ## 5. The Resource API
