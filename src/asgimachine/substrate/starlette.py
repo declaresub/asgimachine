@@ -59,9 +59,30 @@ class _StarletteRequest:
         return await self._request.body()
 
 
+class _ClosingStreamingResponse(StreamingResponse):
+    """A ``StreamingResponse`` that ``aclose``s its body iterator after the
+    response completes or the client disconnects.
+
+    Starlette's ``StreamingResponse`` never ``aclose``s the body on the ASGI
+    spec>=2.4 path — it leaves finalization to GC. The core wraps a streamed body
+    in ``_ClosingStream``, whose ``aclose`` releases the per-request lifespan; this
+    subclass guarantees that ``aclose`` is actually called (even on a disconnect,
+    which raises out of ``super().__call__``), so teardown is deterministic rather
+    than GC-timed.
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            aclose = getattr(self.body_iterator, "aclose", None)
+            if aclose is not None:
+                await aclose()
+
+
 def _to_starlette(response: HttpResponse) -> Response:
     if response.is_stream:
-        return StreamingResponse(
+        return _ClosingStreamingResponse(
             response.body,  # type: ignore[arg-type]
             status_code=response.status,
             headers=response.headers,

@@ -62,57 +62,111 @@ async def run(
     # owns the wrapping so it can also own guaranteed, cancellation-safe teardown.
     lifespan = asynccontextmanager(resource.lifespan)(ctx)
     await lifespan.__aenter__()
+    streaming = False
+    torn_down = False
     try:
-        response = await _walk(resource, ctx)
-    except HaltResponse as halt:
-        response = halt.response
+        try:
+            response = await _walk(resource, ctx)
+        except HaltResponse as halt:
+            response = halt.response
+        if debug:
+            response.headers[TRACE_HEADER] = ctx.trace.header_value
+        if response.is_stream:
+            # The streamed body outlives this call; hand teardown to the wrapper,
+            # which releases when the body drains, errors, or is closed — even if
+            # the substrate never starts iterating it (a pre-first-chunk
+            # disconnect). Ownership transfers, so this scope must not release.
+            stream = cast("AsyncIterator[bytes]", response.body)
+            response.body = _ClosingStream(stream, lifespan)
+            streaming = True
+        return response
     except BaseException as exc:
         # A real error or a cancellation (client disconnect): tear down with the
         # exception in flight so a lifespan transaction rolls back, then re-raise.
+        torn_down = True
         await _teardown(lifespan, exc)
         raise
-    if debug:
-        response.headers[TRACE_HEADER] = ctx.trace.header_value
-    if response.is_stream:
-        # The streamed body outlives this call; defer teardown until it drains so
-        # a connection stashed on ctx stays alive for the life of the stream.
-        stream = cast("AsyncIterator[bytes]", response.body)
-        response.body = _closing_stream(stream, lifespan)
-        return response
-    await _teardown(lifespan, None)
-    return response
+    finally:
+        # Non-streaming success/halt: release here, exactly once — in a finally so
+        # a throw anywhere above (debug header, stream wrap) can't skip it. The
+        # streaming path transferred ownership; the error path already released.
+        if not streaming and not torn_down:
+            await _teardown(lifespan, None)
+
+
+# Cap on the shielded (otherwise uninterruptible) teardown window, so a lifespan
+# whose release blocks forever — e.g. a rollback on a half-open socket — cannot
+# hang the request task or stall shutdown. On timeout the release is abandoned.
+_TEARDOWN_TIMEOUT_S = 30.0
 
 
 async def _teardown(
     lifespan: AbstractAsyncContextManager[None], exc: BaseException | None
 ) -> None:
     """Close the lifespan, shielded so a client disconnect cannot interrupt
-    resource release. An in-flight ``exc`` is fed in (rollback); a lifespan that
-    *suppresses* it is a misuse — the original outcome is still propagated."""
+    resource release, but bounded by ``_TEARDOWN_TIMEOUT_S`` so a release that
+    blocks forever cannot hang the task. An in-flight ``exc`` is fed in (rollback);
+    a lifespan that *suppresses* it is a misuse — the outcome is still propagated."""
 
-    with anyio.CancelScope(shield=True):
+    with anyio.CancelScope(shield=True), anyio.move_on_after(_TEARDOWN_TIMEOUT_S):
         if exc is None:
             await lifespan.__aexit__(None, None, None)
         else:
             await lifespan.__aexit__(type(exc), exc, exc.__traceback__)
 
 
-async def _closing_stream(
-    body: AsyncIterator[bytes], lifespan: AbstractAsyncContextManager[None]
-) -> AsyncIterator[bytes]:
-    """Relay the streamed body, then tear the lifespan down — so per-request
-    resources live until the stream is fully drained (or the client disconnects,
-    which throws GeneratorExit/cancellation in here and still runs teardown)."""
+class _ClosingStream:
+    """A streamed response body that guarantees the resource lifespan is released
+    exactly once — on exhaustion, error, or close — *including* when the substrate
+    never starts iterating it (a disconnect before the first chunk).
 
-    exc: BaseException | None = None
-    try:
-        async for chunk in body:
-            yield chunk
-    except BaseException as e:
-        exc = e
-        raise
-    finally:
-        await _teardown(lifespan, exc)
+    An async generator's ``finally`` cannot guarantee this: it never runs if the
+    generator was never started, and Starlette's ``StreamingResponse`` does not
+    ``aclose`` the body on the ASGI spec>=2.4 path (it leaves finalization to GC).
+    So teardown lives in ``aclose``/exhaustion behind a one-shot guard, and the
+    substrate calls ``aclose`` unconditionally after the response completes.
+    """
+
+    __slots__ = ("_closed", "_inner", "_lifespan")
+
+    def __init__(
+        self,
+        inner: AsyncIterator[bytes],
+        lifespan: AbstractAsyncContextManager[None],
+    ) -> None:
+        self._inner = inner
+        self._lifespan = lifespan
+        self._closed = False
+
+    def __aiter__(self) -> AsyncIterator[bytes]:
+        return self
+
+    async def __anext__(self) -> bytes:
+        try:
+            return await self._inner.__anext__()
+        except StopAsyncIteration:
+            await self._release(None)  # drained cleanly -> commit
+            raise
+        except BaseException as exc:
+            await self._release(exc)  # mid-stream failure -> rollback
+            raise
+
+    async def aclose(self) -> None:
+        # Called by the substrate after the response finishes or the client
+        # disconnects (and by GC as a backstop). Close the inner stream, then
+        # release — feeding GeneratorExit so an incomplete response rolls back.
+        inner_aclose = getattr(self._inner, "aclose", None)
+        try:
+            if inner_aclose is not None:
+                await inner_aclose()
+        finally:
+            await self._release(GeneratorExit())
+
+    async def _release(self, exc: BaseException | None) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await _teardown(self._lifespan, exc)
 
 
 def _halt(
