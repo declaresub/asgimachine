@@ -32,6 +32,8 @@ class Toggles:
     last_modified: datetime | None = FIXED_LAST_MODIFIED
     offered: list[str] = field(default_factory=lambda: ["application/json"])
     variances: list[str] = field(default_factory=list)
+    languages: list[str] = field(default_factory=list)
+    encodings: list[str] = field(default_factory=list)
 
 
 class ConfigurableResource(Resource):
@@ -40,6 +42,8 @@ class ConfigurableResource(Resource):
         # Per-instance shape, configured at construction.
         self.ALLOWED_METHODS = frozenset(toggles.methods)
         self.PRODUCES = tuple(toggles.offered)
+        self.LANGUAGES = tuple(toggles.languages)
+        self.ENCODINGS = tuple(toggles.encodings)
 
     async def service_available(self, ctx: Ctx) -> bool:
         return self._t.available

@@ -52,6 +52,11 @@ class Ctx:
     request: HttpRequest
     trace: Trace = field(default_factory=Trace)
     chosen_media_type: str | None = None
+    # The proactively-negotiated variant axes (D/F). None when the resource
+    # doesn't offer that axis; a representation reads them to serve the right
+    # translation / content-coding.
+    chosen_language: str | None = None
+    chosen_encoding: str | None = None
     allowed_methods: frozenset[str] = field(default_factory=frozenset[str])
     extra: dict[str, Any] = field(default_factory=dict[str, Any])
     # Framework config: the media-type -> Codec registry for this request.
@@ -182,8 +187,40 @@ class Resource[C: Ctx = Ctx]:
     async def variances(self, ctx: C) -> Sequence[str]:
         # Extra request-header names this representation varies on, emitted in
         # Vary. The core adds "Accept" automatically when more than one media
-        # type is offered, so only list additional axes (e.g. an auth header).
+        # type is offered (and the matching Accept-* axis for each of
+        # LANGUAGES/ENCODINGS offered), so only list additional axes.
         return []
+
+    # --- D/F proactive negotiation (v3) ------------------------------------
+    # Language / content-coding, each parallel to PRODUCES: declare the offered
+    # values in preference order (first wins ties) and the core negotiates against
+    # the matching Accept-* header. Empty (the default) means the axis is not
+    # negotiated — the header is ignored, no Vary axis, no 406. When offered, an
+    # unsatisfiable Accept-* is a 406 (unless ``ignore_unacceptable`` serves the
+    # default instead), and the choice is exposed on ctx for ``represent``.
+    #
+    # (Charset — webmachine's E nodes — is deliberately absent: RFC 9110 §12.5.2
+    # deprecates ``Accept-Charset``. Charset belongs on the Content-Type parameter.)
+    #
+    # asgimachine negotiates and advertises; it does not compress or transcode
+    # (that is the substrate's / your representation's job — "rent Layer 2"). Read
+    # ``ctx.chosen_language`` to pick a translation and ``ctx.chosen_encoding`` to
+    # produce bytes in that content-coding and set ``Content-Encoding``.
+
+    # D4/D5 -> 406. Offered language tags; matched RFC 4647 lookup-style (a request
+    # for ``en-US`` is served by an offered ``en``, and vice versa). Sets
+    # Content-Language.
+    LANGUAGES: tuple[str, ...] = ()
+
+    async def languages(self, ctx: C) -> Sequence[str]:
+        return self.LANGUAGES
+
+    # F6/F7 -> 406. Offered content-codings; ``identity`` is acceptable by default
+    # unless the client refuses it (RFC 9110 §12.5.3).
+    ENCODINGS: tuple[str, ...] = ()
+
+    async def encodings(self, ctx: C) -> Sequence[str]:
+        return self.ENCODINGS
 
     # --- error bodies (§4 v4, RFC 9457) ------------------------------------
     # Media types offered for *error* bodies (4xx/5xx), negotiated against Accept

@@ -26,8 +26,52 @@ default representation instead of a `406`. Opt in with a declaration:
 
 ```python
 class Api(Resource):
-    IGNORE_UNACCEPTABLE = True   # serve PRODUCES[0] instead of 406
+    IGNORE_UNACCEPTABLE = True   # serve the default instead of 406
 ```
+
+It applies to every negotiated axis below, not just `Accept`.
+
+## The other axes — language and encoding
+
+The webmachine D and F nodes. Each is a declaration parallel to `PRODUCES`, and
+each is **opt-in**: leave it empty (the default) and that axis is not negotiated —
+the `Accept-*` header is ignored, nothing is added to `Vary`, and no `406` can
+come from it. A resource that offers none is byte-for-byte unchanged.
+
+```python
+class Greeting(Resource):
+    LANGUAGES = ("en", "fr")          # D4/D5 -> Content-Language, 406
+    ENCODINGS = ("identity", "gzip")  # F6/F7 -> 406
+
+    async def represent(self, ctx: Ctx) -> object:
+        return {"hello": "bonjour" if ctx.chosen_language == "fr" else "hello"}
+```
+
+When an axis is offered, the core negotiates it against the matching request
+header, `406`s an offered-but-unsatisfiable one (unless serve-anyway is set), adds
+the axis to `Vary`, and exposes the choice on `ctx` (`chosen_language`,
+`chosen_encoding`). Language uses RFC 4647 lookup matching (a request for `en-US`
+is served by an offered `en`, and vice versa); `identity` is always an acceptable
+encoding unless the client explicitly refuses it (RFC 9110 §12.5.3).
+
+!!! note "The graph negotiates; it does not transform"
+    asgimachine picks the value, decides `406`/`Vary`, and advertises the headers
+    — it does **not** compress bodies (that's the substrate's or a reverse proxy's
+    job — *rent Layer 2*). Read `ctx.chosen_language` in `represent` to serve the
+    right translation, or `ctx.chosen_encoding` to set `Content-Encoding` after
+    applying a coding.
+
+### Why there's no `Accept-Charset`
+
+webmachine has a matching **E node** for charset; asgimachine deliberately leaves
+it out. RFC 9110 §12.5.2 **deprecates `Accept-Charset`**: UTF-8 is now nearly
+universal, sending a charset list "wastes bandwidth, increases latency, and makes
+passive fingerprinting far too easy," and general-purpose user agents no longer
+send it. Charset today is carried by the Content-Type `charset` parameter, not a
+negotiation axis — and letting a *deprecated* request header force a hard `406`
+would work directly against the spec's guidance. If you genuinely need to stamp a
+charset, set it on the response Content-Type in your codec or representation; the
+graph won't negotiate it for you.
 
 ## Conditional requests
 
