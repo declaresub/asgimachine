@@ -356,6 +356,16 @@ concrete need appears.
 - **Explicitly out of scope — rent, don't model:** Expect/`100-continue` (100 /
   417) is a transport handshake uvicorn/ASGI answers below us (§2.1); `428`/`431`
   are thin gates worth adding only on demand.
+- **Rate limiting / `429`.** *Global* rate limiting is edge/middleware (traffic, not
+  a resource property — rejected before routing, before the lifespan). *Per-resource*
+  quota (e.g. a login endpoint) is a genuine resource property, and would be a B13
+  sibling node (`within_rate_limit? -> 429`) reusing the availability return type
+  below — deferred to a cookbook recipe until a concrete need appears.
+- **`Retry-After` on availability responses.** ✅ *Done* — `service_available`
+  returns `bool | RetryHint` (`RetryHint = int | datetime`, delta-seconds or an
+  HTTP-date, RFC 9110 §10.2.3): `True` = available, `False` = 503 with no hint, an
+  int/datetime = 503 carrying `Retry-After`. The same return type a per-resource
+  429 node would use.
 - **Remaining graph gaps (not scheduled):** POST-to-missing create
   (M7/N5 `allow_missing_post` — POST the parent collection instead), 301 on a PUT to
   a moved target (I4), and the finer 201-vs-200 on a PUT that creates a subordinate

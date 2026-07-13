@@ -13,7 +13,7 @@ from .core import run
 from .event import Event, EventSink, LoggingEventSink
 from .http import HaltResponse, HttpRequest, HttpResponse, Status, serialize
 from .policy import Decision, Effect, NamedRule, Policy, RuleEngine
-from .resource import Ctx, Producer, Resource
+from .resource import Ctx, Producer, Resource, RetryHint
 from .schema import Operation, ResourceDescription, generate_openapi
 from .trace import TRACE_HEADER, Trace, TraceEntry
 
@@ -38,6 +38,7 @@ __all__ = [
     "Producer",
     "Resource",
     "ResourceDescription",
+    "RetryHint",
     "RuleEngine",
     "Status",
     "Trace",

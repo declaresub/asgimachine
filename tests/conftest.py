@@ -23,7 +23,7 @@ FIXED_LAST_MODIFIED = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 @dataclass(slots=True)
 class Toggles:
-    available: bool = True
+    available: bool | int | datetime = True  # int/datetime -> 503 + Retry-After
     methods: list[str] = field(default_factory=lambda: ["GET", "HEAD"])
     authorized: bool | str = True
     forbidden: bool = False
@@ -45,7 +45,7 @@ class ConfigurableResource(Resource):
         self.LANGUAGES = tuple(toggles.languages)
         self.ENCODINGS = tuple(toggles.encodings)
 
-    async def service_available(self, ctx: Ctx) -> bool:
+    async def service_available(self, ctx: Ctx) -> bool | int | datetime:
         return self._t.available
 
     async def is_authorized(self, ctx: Ctx) -> bool | str:

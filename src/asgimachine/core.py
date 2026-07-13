@@ -347,13 +347,26 @@ def _allow_header(methods: frozenset[str]) -> str:
     return ", ".join(sorted(methods | {"OPTIONS"}))
 
 
+def _retry_after(hint: bool | int | datetime) -> dict[str, str]:
+    """A ``Retry-After`` header dict from an availability hint (True is filtered by
+    the caller). ``bool`` -> none (a bare False); ``datetime`` -> an HTTP-date;
+    ``int`` -> delta-seconds. ``bool`` is checked first — it *is* an ``int``."""
+
+    if isinstance(hint, bool):
+        return {}
+    if isinstance(hint, datetime):
+        return {"Retry-After": http_date(hint)}
+    return {"Retry-After": str(hint)}
+
+
 async def _walk(resource: Resource[Any], ctx: Ctx) -> HttpResponse:
     request = ctx.request
     method = request.method
 
-    # B13 service_available? -> 503
-    if not await resource.service_available(ctx):
-        raise _halt(ctx, "B13", Status.SERVICE_UNAVAILABLE)
+    # B13 service_available? -> 503 (+ Retry-After when a hint is returned).
+    available = await resource.service_available(ctx)
+    if available is not True:
+        raise _halt(ctx, "B13", Status.SERVICE_UNAVAILABLE, _retry_after(available))
     ctx.trace.record("B13", True)
 
     # B12 known_method? -> 501
