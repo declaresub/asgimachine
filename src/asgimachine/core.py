@@ -9,9 +9,11 @@ decides; any node may raise :class:`HaltResponse` to short-circuit.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import logging
+from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast, get_type_hints
 
 import anyio
@@ -43,8 +45,11 @@ from .trace import TRACE_HEADER
 
 if TYPE_CHECKING:
     from .codec import Codec
+    from .event import EventSink
     from .http import HttpRequest
     from .resource import OnException
+
+_log = logging.getLogger("asgimachine.core")
 
 SAFE_METHODS = frozenset({"GET", "HEAD"})
 # Methods that carry a request body; the body-validation nodes (B9/B6/B5/B4) are
@@ -59,6 +64,7 @@ async def run(
     debug: bool = False,
     codecs: dict[str, Codec] | None = None,
     on_exception: OnException | None = None,
+    event_sink: EventSink | None = None,
 ) -> HttpResponse:
     """Walk the graph for one request and return an HttpResponse value object.
 
@@ -67,9 +73,12 @@ async def run(
     is the media-type -> Codec registry (defaults to JSON only). ``on_exception``
     is the app-level catch-all for an unexpected ``Exception`` (a resource may
     override it); it defaults to re-raising, so the exception propagates to the
-    substrate's outer handler unless a handler opts to own the 500.
+    substrate's outer handler unless a handler opts to own the 500. ``event_sink``,
+    when given, receives one wide event per request (``ctx.event``), emitted once at
+    the boundary — after lifespan teardown, or at stream-close for a streamed body.
     """
 
+    started = perf_counter()
     ctx = resource.context_class(
         # Copy per request: an injected registry is shared by reference across
         # every request through the endpoint, so ctx must get its own dict (as the
@@ -88,6 +97,8 @@ async def run(
     # The unexpected exception, once handled into a response — fed to teardown so a
     # lifespan transaction still rolls back even though we return a 500, not raise.
     handled_exc: Exception | None = None
+    # Bound for the finally (which runs even if the walk raised before assigning).
+    final_response: HttpResponse | None = None
     try:
         try:
             response = await _walk(resource, ctx)
@@ -100,32 +111,47 @@ async def run(
             # response, or re-raise (propagating to the arm below).
             handled_exc = exc
             response = await _handle_exception(resource, ctx, exc, on_exception)
+        final_response = response
         if debug:
             response.headers[TRACE_HEADER] = ctx.trace.header_value
         if response.is_stream:
             # The streamed body outlives this call; hand teardown to the wrapper,
             # which releases when the body drains, errors, or is closed — even if
             # the substrate never starts iterating it (a pre-first-chunk
-            # disconnect). Ownership transfers, so this scope must not release.
+            # disconnect). Ownership transfers, so this scope must not release. The
+            # wide event is emitted at that same close, so late work (a DB merge in
+            # the lifespan teardown) and the final duration land in it.
             stream = cast("AsyncIterator[bytes]", response.body)
-            response.body = _ClosingStream(stream, lifespan)
+            streamed = response
+
+            def _on_close(close_exc: BaseException | None) -> None:
+                stream_exc = close_exc if isinstance(close_exc, Exception) else None
+                _record_and_emit(
+                    event_sink, ctx, resource, streamed, stream_exc, started
+                )
+
+            response.body = _ClosingStream(stream, lifespan, _on_close)
             streaming = True
         return response
     except BaseException as exc:
         # A propagated error (the handler re-raised) or a cancellation (client
         # disconnect): tear down with the exception in flight so a lifespan
-        # transaction rolls back, then re-raise.
+        # transaction rolls back, emit the (statusless) event, then re-raise.
         torn_down = True
         await _teardown(lifespan, exc)
+        _record_and_emit(event_sink, ctx, resource, None, exc, started)
         raise
     finally:
         # Non-streaming success/halt/handled-500: release here, exactly once — in a
         # finally so a throw anywhere above can't skip it. A handled exception is
         # fed in so the transaction still rolls back (the contextmanager absorbs the
-        # expected re-raise). The streaming path transferred ownership; the
-        # propagate path already released.
+        # expected re-raise). Then emit, after teardown. The streaming path
+        # transferred ownership; the propagate path already released and emitted.
         if not streaming and not torn_down:
             await _teardown(lifespan, handled_exc)
+            _record_and_emit(
+                event_sink, ctx, resource, final_response, handled_exc, started
+            )
 
 
 # Cap on the shielded (otherwise uninterruptible) teardown window, so a lifespan
@@ -149,6 +175,61 @@ async def _teardown(
             await lifespan.__aexit__(type(exc), exc, exc.__traceback__)
 
 
+def _outcome(response: HttpResponse | None, exc: BaseException | None) -> str:
+    if exc is not None:
+        return "propagated" if response is None else "error"
+    if response is None:
+        return "unknown"
+    if response.status >= 500:
+        return "error"
+    if response.status >= 400:
+        return "halt"
+    return "ok"
+
+
+def _record_and_emit(
+    sink: EventSink | None,
+    ctx: Ctx,
+    resource: Resource[Any],
+    response: HttpResponse | None,
+    exc: BaseException | None,
+    started: float,
+) -> None:
+    """Fill the core-owned fields on ``ctx.event`` (OTel semantic conventions +
+    the ``asgm.`` namespace) and emit it. A no-op without a sink; a sink that
+    raises is swallowed — observability must never break the request."""
+
+    if sink is None:
+        return
+    ev = ctx.event
+    ev["http.request.method"] = ctx.request.method
+    ev["url.path"] = ctx.request.path
+    ev["asgm.resource"] = type(resource).__name__
+    ev["asgm.decision_path"] = ctx.trace.header_value
+    ev["asgm.outcome"] = _outcome(response, exc)
+    ev["duration_ms"] = round((perf_counter() - started) * 1000, 3)
+    if ctx.chosen_media_type is not None:
+        ev["asgm.media_type"] = ctx.chosen_media_type
+    if ctx.chosen_language is not None:
+        ev["asgm.language"] = ctx.chosen_language
+    if ctx.chosen_encoding is not None:
+        ev["asgm.encoding"] = ctx.chosen_encoding
+    if response is not None:
+        ev["http.response.status_code"] = response.status
+        if response.status >= 400 and ctx.trace.nodes:
+            ev["asgm.halted_at"] = ctx.trace.nodes[-1]
+    if exc is not None:
+        ev["exception.type"] = type(exc).__qualname__
+        ev["exception.message"] = str(exc)
+        ev["error.type"] = type(exc).__qualname__
+    elif response is not None and response.status >= 500:
+        ev["error.type"] = str(response.status)
+    try:
+        sink.emit(ev)
+    except Exception:  # noqa: BLE001 — a broken sink must not break the request
+        _log.exception("event sink failed")
+
+
 class _ClosingStream:
     """A streamed response body that guarantees the resource lifespan is released
     exactly once — on exhaustion, error, or close — *including* when the substrate
@@ -161,16 +242,20 @@ class _ClosingStream:
     substrate calls ``aclose`` unconditionally after the response completes.
     """
 
-    __slots__ = ("_closed", "_inner", "_lifespan")
+    __slots__ = ("_closed", "_inner", "_lifespan", "_on_release")
 
     def __init__(
         self,
         inner: AsyncIterator[bytes],
         lifespan: AbstractAsyncContextManager[None],
+        on_release: Callable[[BaseException | None], None] | None = None,
     ) -> None:
         self._inner = inner
         self._lifespan = lifespan
         self._closed = False
+        # Called once, after teardown, with the close signal (None = drained
+        # cleanly). Used to emit the wide event at stream close.
+        self._on_release = on_release
 
     def __aiter__(self) -> AsyncIterator[bytes]:
         return self
@@ -201,6 +286,8 @@ class _ClosingStream:
             return
         self._closed = True
         await _teardown(self._lifespan, exc)
+        if self._on_release is not None:
+            self._on_release(exc)
 
 
 def _halt(

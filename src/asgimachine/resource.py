@@ -31,6 +31,7 @@ def _reason(status: int) -> str:
 
 if TYPE_CHECKING:
     from .codec import Codec
+    from .event import Event
     from .http import HttpRequest, HttpResponse
     from .schema import ResourceDescription
 
@@ -65,6 +66,11 @@ class Ctx:
     chosen_encoding: str | None = None
     allowed_methods: frozenset[str] = field(default_factory=frozenset[str])
     extra: dict[str, Any] = field(default_factory=dict[str, Any])
+    # The per-request wide event (§ observability). Callbacks and instrumented code
+    # enrich it in place; the core fills owned fields and emits it once at the
+    # request boundary. Always present, so writing to it is free; emitted only when
+    # an EventSink is configured.
+    event: Event = field(default_factory=dict[str, object])
     # Framework config: the media-type -> Codec registry for this request.
     codecs: dict[str, Codec] = field(default_factory=dict[str, "Codec"])
 

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from ..codec import Codec
     from ..command import Command
+    from ..event import EventSink
     from ..resource import OnException, Resource
 
 
@@ -152,13 +153,14 @@ class _ResourceEndpoint:
         # Tie the decision-trace header to Starlette's own debug flag; read the
         # app-wide on_exception handler the same way (both live on the app).
         debug = bool(getattr(app, "debug", False))
-        on_exception = getattr(getattr(app, "state", None), "on_exception", None)
+        state = getattr(app, "state", None)
         response = await run(
             self._resource,
             _StarletteRequest(request, self._resource.MAX_BODY_BYTES),
             debug=debug,
             codecs=self._codecs,
-            on_exception=on_exception,
+            on_exception=getattr(state, "on_exception", None),
+            event_sink=getattr(state, "event_sink", None),
         )
         await _to_starlette(response)(scope, receive, send)
 
@@ -212,6 +214,7 @@ def build_app(
     debug: bool = False,
     middleware: Sequence[Middleware] | None = None,
     on_exception: OnException | None = None,
+    event_sink: EventSink | None = None,
 ) -> Starlette:
     """Assemble the composition root into an ASGI application.
 
@@ -234,10 +237,15 @@ def build_app(
     re-raising — so a bug propagates to Starlette's ``ServerErrorMiddleware`` (or an
     ASGI error reporter) as before — but a handler may report the error, enrich the
     request context, and return to have the graph own a negotiated 500 instead.
+
+    ``event_sink``, when given, receives one wide event per request (``ctx.event``)
+    — the canonical-log-line seam. None by default (nothing is emitted);
+    :class:`asgimachine.event.LoggingEventSink` is the reference sink.
     """
 
     app = Starlette(debug=debug, routes=routes, middleware=middleware)
-    # Carried on the app so each endpoint can read it from the ASGI scope at request
-    # time (the same way it reads ``debug``), rather than closing over every route.
+    # Carried on the app so each endpoint can read them from the ASGI scope at
+    # request time (the same way it reads ``debug``), not close over every route.
     app.state.on_exception = on_exception
+    app.state.event_sink = event_sink
     return app
