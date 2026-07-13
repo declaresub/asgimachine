@@ -240,6 +240,11 @@ async def _walk(resource: Resource[Any], ctx: Ctx) -> HttpResponse:
         raise _halt(ctx, "B12", Status.NOT_IMPLEMENTED)
     ctx.trace.record("B12", True)
 
+    # B11 uri_too_long? -> 414. Recorded only when it fires (default never does),
+    # so the canonical trace of a resource that ignores it is unchanged.
+    if await resource.uri_too_long(ctx):
+        raise _halt(ctx, "B11", Status.URI_TOO_LONG)
+
     # B10 method_allowed? -> 405 + Allow
     allowed = await resource.allowed_methods(ctx)
     ctx.allowed_methods = allowed
@@ -465,10 +470,26 @@ async def _post(
         ctx.trace.record("N11", True)
         location = await resource.create_path(ctx)
         value = await _apply(resource, ctx)
+        redirect = await resource.see_other(ctx)
+        if redirect is not None:
+            return _see_other(ctx, redirect, headers)
         return _finish(ctx, Status.CREATED, value, {**headers, "Location": location})
     ctx.trace.record("N11", False)
     value = await resource.process_post(ctx)
+    redirect = await resource.see_other(ctx)
+    if redirect is not None:
+        return _see_other(ctx, redirect, headers)
     return _finish(ctx, Status.OK, value, headers)
+
+
+def _see_other(ctx: Ctx, url: str, headers: dict[str, str]) -> HttpResponse:
+    # N11a -> 303 See Other (PRG): the POST's side effects have run; redirect the
+    # client to the result URL with an empty body. The "a" suffix marks an additive
+    # node (like B7a/K5a/C4a), so it appears in the trace only when it fires.
+    ctx.trace.record("N11a", int(Status.SEE_OTHER))
+    return HttpResponse(
+        status=int(Status.SEE_OTHER), headers={**headers, "Location": url}
+    )
 
 
 async def _write(

@@ -47,6 +47,7 @@ class Status(IntEnum):
     NO_CONTENT = 204
     MULTIPLE_CHOICES = 300
     MOVED_PERMANENTLY = 301
+    SEE_OTHER = 303  # N11: redirect after a POST's side effects (PRG)
     TEMPORARY_REDIRECT = 307
     PERMANENT_REDIRECT = 308  # RFC 7538: like 301 but method-preserving
     NOT_MODIFIED = 304
@@ -60,6 +61,7 @@ class Status(IntEnum):
     GONE = 410
     PRECONDITION_FAILED = 412
     REQUEST_ENTITY_TOO_LARGE = 413
+    URI_TOO_LONG = 414  # B11: request target too long
     UNSUPPORTED_MEDIA_TYPE = 415
     UNAVAILABLE_FOR_LEGAL_REASONS = 451  # RFC 7725
     INTERNAL_SERVER_ERROR = 500

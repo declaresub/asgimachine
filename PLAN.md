@@ -307,7 +307,7 @@ concrete need appears.
   instead of 406. A declaration read through the thin `ignore_unacceptable(ctx)`
   callback (§2.7), so the schema drops 406 from the surface when it is set;
   default `False` preserves the hard 406. (Extended in v3 to every negotiated
-  axis — `Accept` and the D/E/F `Accept-Language`/`Charset`/`Encoding`.)
+  axis — `Accept` and the D/F `Accept-Language`/`Encoding`.)
 - **Alternative-response-body negotiation** (the diagram's `is response
   alternative` → `alternative … to content` tail). ✅ *Done* (as **error bodies**).
   Every 4xx/5xx halt now carries a body, negotiated over `ERROR_PRODUCES` *after*
@@ -319,9 +319,21 @@ concrete need appears.
   gets a body); redirects/304 keep empty bodies; HEAD sends headers only. Produced
   centrally in `run()`'s halt handler. (The 300 `multiple_choices` body keeps its
   existing main-negotiated path.)
+- **`uri_too_long?` → 414** (canonical node **B11**, between B12 and B10). ✅ *Done*
+  — `uri_too_long(ctx)` callback, default `False` (deployments usually cap URI
+  length at the server first), recorded only when it fires; the schema derives 414
+  when it's overridden.
+- **See-Other after POST → 303** (the N11 redirect branch — POST-Redirect-Get). ✅
+  *Done* — `see_other(ctx)` returns a URL to redirect to with 303 *after* the POST's
+  side effects run (create/apply or `process_post`), overriding the 201/200. Node
+  **N11a**; `None` (default) keeps the normal create/action response.
 - **Explicitly out of scope — rent, don't model:** Expect/`100-continue` (100 /
   417) is a transport handshake uvicorn/ASGI answers below us (§2.1); `428`/`431`
   are thin gates worth adding only on demand.
+- **Remaining graph gaps (not scheduled):** POST-to-missing create
+  (M7/N5 `allow_missing_post` — POST the parent collection instead), 301 on a PUT to
+  a moved target (I4), and the finer 201-vs-200 on a PUT that creates a subordinate
+  (P11). See the [Coverage vs. webmachine](docs/concepts/webmachine-coverage.md) page.
 
 Reference: `httpdd.fsm.png` in the repo above; see the `httpdd-diagram` memo for
 the full webmachine delta.

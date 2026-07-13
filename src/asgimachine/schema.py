@@ -87,6 +87,8 @@ def _auto_error_statuses(resource: Resource[Any], method: str) -> set[int]:
     """The candidate error statuses for ``method``, from overridden callbacks."""
 
     statuses: set[int] = set()
+    if _overrides(resource, "uri_too_long"):
+        statuses.add(414)
     if _overrides(resource, "is_authorized"):
         statuses.add(401)
     if _overrides(resource, "forbidden"):
