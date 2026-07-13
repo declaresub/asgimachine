@@ -1,0 +1,19 @@
+# Dependency update policy. Alerts + security PRs are enabled repo-side; this adds
+# scheduled version updates. `cooldown` delays picking up brand-new releases to
+# dodge the malicious-fresh-publish window. Dependabot PRs are reviewed, not
+# auto-merged — CI passing is not sufficient trust for a dependency bump.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
