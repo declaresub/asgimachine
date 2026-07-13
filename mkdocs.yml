@@ -68,6 +68,7 @@ nav:
       - The two lanes: concepts/two-lanes.md
       - Per-request lifespan: concepts/lifespan.md
       - Negotiation & errors: concepts/negotiation.md
+      - Observability & logging: concepts/observability.md
       - Coverage vs. webmachine: concepts/webmachine-coverage.md
   - Examples: examples.md
   - API reference: reference.md
