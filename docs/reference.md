@@ -56,6 +56,12 @@ Generated from the source docstrings.
 
 ::: asgimachine.trace.TraceEntry
 
+## Wide events
+
+::: asgimachine.event.EventSink
+
+::: asgimachine.event.LoggingEventSink
+
 ## Starlette substrate
 
 ::: asgimachine.substrate.starlette.build_app

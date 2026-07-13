@@ -10,6 +10,7 @@ from __future__ import annotations
 from .codec import DEFAULT_CODECS, Codec, JsonCodec
 from .command import Command, json_response
 from .core import run
+from .event import Event, EventSink, LoggingEventSink
 from .http import HaltResponse, HttpRequest, HttpResponse, Status, serialize
 from .policy import Decision, Effect, NamedRule, Policy, RuleEngine
 from .resource import Ctx, Producer, Resource
@@ -24,10 +25,13 @@ __all__ = [
     "Ctx",
     "Decision",
     "Effect",
+    "Event",
+    "EventSink",
     "HaltResponse",
     "HttpRequest",
     "HttpResponse",
     "JsonCodec",
+    "LoggingEventSink",
     "NamedRule",
     "Operation",
     "Policy",

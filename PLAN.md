@@ -319,6 +319,19 @@ concrete need appears.
   gets a body); redirects/304 keep empty bodies; HEAD sends headers only. Produced
   centrally in `run()`'s halt handler. (The 300 `multiple_choices` body keeps its
   existing main-negotiated path.)
+- **Wide-event logging** (`ctx.event` + `EventSink`). ✅ *Done*. One structured
+  event per request accumulates on `ctx.event` (a plain dict) and is emitted once
+  at the boundary through a pluggable `EventSink` — **after** lifespan teardown, or
+  at **stream-close** for a streamed body, so a DB accumulator merged in the
+  lifespan lands in it. The core fills owned fields (OTel semantic conventions:
+  `http.request.method`, `http.response.status_code`, `url.path`,
+  `error.type`/`exception.*`; plus the `asgm.` namespace: `resource`,
+  `decision_path`, `outcome`, `halted_at`, negotiated `media_type`/`language`/
+  `encoding`, `duration_ms`); resources and instrumented code enrich it in place.
+  No sink by default (nothing emitted); `LoggingEventSink` is the reference, wired
+  at `build_app(event_sink=...)`. A broken sink is swallowed — observability never
+  breaks the request. The `on_exception` handler is where an error reporter records
+  a report id onto `ctx.event` before emit.
 - **Unexpected-exception catch-all** (`on_exception`). ✅ *Done* (observability
   groundwork). `run()` catches `Exception` (never `BaseException` — a client
   disconnect/cancellation always propagates + rolls back) and hands it to a
