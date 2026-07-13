@@ -1,15 +1,27 @@
 # asgimachine
 
-A webmachine-style HTTP decision-graph framework for Python.
+**webmachine for Python** — an HTTP decision-graph framework for resources that are
+correct by construction.
 
-You write a **resource** — a class of small `async` callbacks like `is_authorized`,
+You write a **resource** as a handful of small `async` callbacks — `is_authorized`,
 `resource_exists`, `generate_etag`, `represent` — and asgimachine walks the
 [webmachine v3 decision graph](https://raw.githubusercontent.com/wiki/basho/webmachine/images/http-headers-status-v3.png)
 over them. Content negotiation, conditional requests (ETag / `If-None-Match` /
-`If-Modified-Since`), `405 + Allow`, `406`, `304`, caching headers, and the
-POST/PUT/PATCH/DELETE write path all fall out of the graph. You override only the
-callbacks your resource actually cares about; every one ships a correct HTTP
-default.
+`If-Modified-Since`), `405 + Allow`, `406`, `304`, `Vary`, caching headers, and the
+POST/PUT/PATCH/DELETE write path all fall out of the graph — each with a correct
+HTTP default. You override only the callbacks your resource actually cares about.
+
+**This is a specialist tool, not a general web framework.** It optimizes for the one
+thing FastAPI, Flask, and DRF leave to you: getting HTTP semantics *right* — the
+strong-vs-weak ETag comparison, the `Vary` you forgot, the `304` where you'd have
+shipped a `200`. Reach for it when correctness at the HTTP layer is the point:
+public REST APIs, CDN-cacheable content, feeds and outboxes, conditional-request-
+heavy services. If you want the shortest path from idea to a JSON CRUD endpoint, or
+a batteries-included stack with an ORM and auth, use FastAPI or Django —
+asgimachine has none of that by design. It **owns the decision graph and rents
+everything else** (routing, the server, middleware) from
+[Starlette](https://www.starlette.io/), so it composes with that ecosystem instead
+of replacing it.
 
 > **Status:** experimental. Requires **Python 3.14+** (it uses PEP 695 generics and
 > PEP 696 type-parameter defaults). The decision graph implements the v0–v3 subset
