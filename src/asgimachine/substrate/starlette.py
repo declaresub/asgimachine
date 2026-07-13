@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from ..codec import Codec
     from ..command import Command
-    from ..resource import Resource
+    from ..resource import OnException, Resource
 
 
 class _StarletteRequest:
@@ -148,13 +148,17 @@ class _ResourceEndpoint:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         request = Request(scope, receive)
-        # Tie the decision-trace header to Starlette's own debug flag.
-        debug = bool(getattr(scope.get("app"), "debug", False))
+        app = scope.get("app")
+        # Tie the decision-trace header to Starlette's own debug flag; read the
+        # app-wide on_exception handler the same way (both live on the app).
+        debug = bool(getattr(app, "debug", False))
+        on_exception = getattr(getattr(app, "state", None), "on_exception", None)
         response = await run(
             self._resource,
             _StarletteRequest(request, self._resource.MAX_BODY_BYTES),
             debug=debug,
             codecs=self._codecs,
+            on_exception=on_exception,
         )
         await _to_starlette(response)(scope, receive, send)
 
@@ -207,6 +211,7 @@ def build_app(
     *,
     debug: bool = False,
     middleware: Sequence[Middleware] | None = None,
+    on_exception: OnException | None = None,
 ) -> Starlette:
     """Assemble the composition root into an ASGI application.
 
@@ -223,6 +228,16 @@ def build_app(
             routes,
             middleware=[Middleware(CORSMiddleware, allow_origins=["https://app.example"])],
         )
+
+    ``on_exception`` is the app-wide catch-all for an unexpected ``Exception`` raised
+    during a resource's walk (a resource may override its own). It defaults to
+    re-raising — so a bug propagates to Starlette's ``ServerErrorMiddleware`` (or an
+    ASGI error reporter) as before — but a handler may report the error, enrich the
+    request context, and return to have the graph own a negotiated 500 instead.
     """
 
-    return Starlette(debug=debug, routes=routes, middleware=middleware)
+    app = Starlette(debug=debug, routes=routes, middleware=middleware)
+    # Carried on the app so each endpoint can read it from the ASGI scope at request
+    # time (the same way it reads ``debug``), rather than closing over every route.
+    app.state.on_exception = on_exception
+    return app
