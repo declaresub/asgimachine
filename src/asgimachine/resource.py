@@ -120,6 +120,13 @@ class Resource[C: Ctx = Ctx]:
     async def service_available(self, ctx: C) -> bool:
         return True
 
+    # --- B11 ---------------------------------------------------------------
+    async def uri_too_long(self, ctx: C) -> bool:  # -> 414
+        # True when the request target is longer than this resource will serve.
+        # Default False — most deployments cap URI length at the server/proxy
+        # first, so this rarely fires; recorded in the trace only when it does.
+        return False
+
     # --- B8 ----------------------------------------------------------------
     async def is_authorized(self, ctx: C) -> bool | str:
         # True = authorized; False = 401 (no challenge); str = 401 with that
@@ -320,6 +327,13 @@ class Resource[C: Ctx = Ctx]:
             f"{type(self).__name__} handles POST but does not implement "
             "process_post() (or set post_is_create).",
         )
+
+    async def see_other(self, ctx: C) -> str | None:  # N11 -> 303
+        # After the POST's side effects run (create_path/apply or process_post),
+        # return a URL to redirect the client to with 303 See Other — the
+        # POST-Redirect-Get pattern. None (the default) responds 201 (create) /
+        # 200 (action) normally. The URL overrides the created/action response.
+        return None
 
     # --- G7-false branch: the resource does not (currently) exist ----------
     async def previously_existed(self, ctx: C) -> bool:  # K7
