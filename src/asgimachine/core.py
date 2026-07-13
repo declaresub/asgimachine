@@ -32,7 +32,12 @@ from .http import (
     Status,
     serialize,
 )
-from .negotiation import choose_media_type, parse_content_type
+from .negotiation import (
+    choose_encoding,
+    choose_language,
+    choose_media_type,
+    parse_content_type,
+)
 from .resource import Ctx
 from .trace import TRACE_HEADER
 
@@ -301,16 +306,21 @@ async def _walk(resource: Resource[Any], ctx: Ctx) -> HttpResponse:
         raise _halt(ctx, "C4", Status.NOT_ACCEPTABLE)
     ctx.chosen_media_type = chosen
 
+    # D4/D5, F6/F7 language / encoding negotiation. Each axis is negotiated only
+    # when the resource offers choices; may 406. Returns the extra Vary axes so the
+    # cacheable response keys on them.
+    variant_vary = await _negotiate_variant_axes(resource, ctx)
+
     # G7 resource_exists? -> the missing-resource branch (create / redirect / 404)
     if not await resource.resource_exists(ctx):
         ctx.trace.record("G7", False)
-        return await _handle_missing(resource, ctx, method, chosen)
+        return await _handle_missing(resource, ctx, method)
     ctx.trace.record("G7", True)
 
     # Vary: the resource's declared variances, plus Accept whenever more than one
-    # media type is offered (this response was content-negotiated). Emitted on
-    # cacheable responses (200 and 304) so intermediaries key correctly.
-    vary_headers = await _vary_headers(resource, ctx, offered)
+    # media type is offered, plus each negotiated D/E/F axis. Emitted on cacheable
+    # responses (200 and 304) so intermediaries key correctly.
+    vary_headers = await _vary_headers(resource, ctx, offered, variant_vary)
 
     # Conditional requests (G8-L17): compute validators once, reuse for the
     # precondition checks and the final response headers.
@@ -334,7 +344,7 @@ async def _walk(resource: Resource[Any], ctx: Ctx) -> HttpResponse:
     # Method dispatch (M/N/O). GET/HEAD build a representation; write methods run
     # their processing nodes.
     if method in SAFE_METHODS:
-        headers = {"Content-Type": chosen, **cacheable_headers}
+        headers = _representation_headers(ctx, cacheable_headers)
         # O18 multiple representations? -> 300 with the list of offered types.
         if await resource.multiple_choices(ctx):
             ctx.trace.record("O18", int(Status.MULTIPLE_CHOICES))
@@ -357,9 +367,9 @@ async def _walk(resource: Resource[Any], ctx: Ctx) -> HttpResponse:
     if method == "DELETE":
         return await _delete(resource, ctx, vary_headers)
     if method == "POST":
-        return await _post(resource, ctx, chosen, vary_headers)
+        return await _post(resource, ctx, vary_headers)
     # PUT / PATCH: update an existing resource.
-    return await _write(resource, ctx, chosen, vary_headers)
+    return await _write(resource, ctx, vary_headers)
 
 
 # --- write path (§4 v2) ----------------------------------------------------
@@ -419,7 +429,7 @@ async def _apply(resource: Resource[Any], ctx: Ctx) -> object:
 
 
 def _finish(
-    ctx: Ctx, status: Status, value: object, chosen: str, headers: dict[str, str]
+    ctx: Ctx, status: Status, value: object, headers: dict[str, str]
 ) -> HttpResponse:
     """O20: a None entity yields 204 (or keeps 201/etc.); a value yields a body."""
 
@@ -430,7 +440,7 @@ def _finish(
     ctx.trace.record("O20", int(status))
     return HttpResponse(
         status=int(status),
-        headers={"Content-Type": chosen, **headers},
+        headers=_representation_headers(ctx, headers),
         body=_body(value, head=False, ctx=ctx),
     )
 
@@ -448,34 +458,32 @@ async def _delete(
 
 
 async def _post(
-    resource: Resource[Any], ctx: Ctx, chosen: str, headers: dict[str, str]
+    resource: Resource[Any], ctx: Ctx, headers: dict[str, str]
 ) -> HttpResponse:
     # N16 POST? -> N11 post_is_create?
     if await resource.post_is_create(ctx):
         ctx.trace.record("N11", True)
         location = await resource.create_path(ctx)
         value = await _apply(resource, ctx)
-        return _finish(
-            ctx, Status.CREATED, value, chosen, {**headers, "Location": location}
-        )
+        return _finish(ctx, Status.CREATED, value, {**headers, "Location": location})
     ctx.trace.record("N11", False)
     value = await resource.process_post(ctx)
-    return _finish(ctx, Status.OK, value, chosen, headers)
+    return _finish(ctx, Status.OK, value, headers)
 
 
 async def _write(
-    resource: Resource[Any], ctx: Ctx, chosen: str, headers: dict[str, str]
+    resource: Resource[Any], ctx: Ctx, headers: dict[str, str]
 ) -> HttpResponse:
     # O16 PUT/PATCH -> O14 is_conflict? -> 409, else apply the acceptor.
     if await resource.is_conflict(ctx):
         raise _halt(ctx, "O14", Status.CONFLICT)
     ctx.trace.record("O14", False)
     value = await _apply(resource, ctx)
-    return _finish(ctx, Status.OK, value, chosen, headers)
+    return _finish(ctx, Status.OK, value, headers)
 
 
 async def _handle_missing(
-    resource: Resource[Any], ctx: Ctx, method: str, chosen: str
+    resource: Resource[Any], ctx: Ctx, method: str
 ) -> HttpResponse:
     """The G7-false branch: create (PUT), redirect/gone (previously_existed), 404."""
 
@@ -490,7 +498,7 @@ async def _handle_missing(
             raise _halt(ctx, "P3", Status.CONFLICT)
         ctx.trace.record("P3", False)
         value = await _apply(resource, ctx)
-        return _finish(ctx, Status.CREATED, value, chosen, {})
+        return _finish(ctx, Status.CREATED, value, {})
 
     # K7 previously_existed? -> K5 moved_permanently 301 / L5 moved_temporarily
     # 307 / else 410 Gone.
@@ -564,14 +572,73 @@ async def _check_preconditions(
 
 
 async def _vary_headers(
-    resource: Resource[Any], ctx: Ctx, offered: list[str]
+    resource: Resource[Any], ctx: Ctx, offered: list[str], extra: list[str]
 ) -> dict[str, str]:
-    """Build the ``Vary`` header from resource variances + Accept-negotiation."""
+    """Build ``Vary`` from resource variances + Accept + the negotiated D/E/F axes."""
 
     names = list(await resource.variances(ctx))
     if len(offered) > 1 and "Accept" not in names:
         names.insert(0, "Accept")
+    for axis in extra:
+        if axis not in names:
+            names.append(axis)
     return {"Vary": ", ".join(names)} if names else {}
+
+
+async def _negotiate_variant_axes(resource: Resource[Any], ctx: Ctx) -> list[str]:
+    """D4/D5, F6/F7: language / content-coding negotiation.
+
+    Each axis is negotiated only when the resource *offers* choices (a non-empty
+    ``languages``/``encodings``); an offered-but-unsatisfiable ``Accept-*`` is a
+    406 unless the resource serves-anyway. Sets the chosen values on ``ctx`` and
+    returns the Vary axis names for the axes that were negotiated. (Charset, the E
+    nodes, is omitted — RFC 9110 §12.5.2 deprecates ``Accept-Charset``.)
+    """
+
+    headers = ctx.request.headers
+    vary: list[str] = []
+
+    offered_langs = list(await resource.languages(ctx))
+    if offered_langs:
+        chosen = choose_language(headers.get("accept-language"), offered_langs)
+        ctx.chosen_language = await _resolve_variant(
+            resource, ctx, chosen, offered_langs, "D5"
+        )
+        ctx.trace.record("D5", ctx.chosen_language)
+        vary.append("Accept-Language")
+
+    offered_encodings = list(await resource.encodings(ctx))
+    if offered_encodings:
+        chosen = choose_encoding(headers.get("accept-encoding"), offered_encodings)
+        ctx.chosen_encoding = await _resolve_variant(
+            resource, ctx, chosen, offered_encodings, "F7"
+        )
+        ctx.trace.record("F7", ctx.chosen_encoding)
+        vary.append("Accept-Encoding")
+
+    return vary
+
+
+async def _resolve_variant(
+    resource: Resource[Any], ctx: Ctx, chosen: str | None, offered: list[str], node: str
+) -> str:
+    """Turn a variant selection into a value or a 406 (C4a serve-anyway extended)."""
+
+    if chosen is not None:
+        return chosen
+    if await resource.ignore_unacceptable(ctx):
+        return offered[0]
+    raise _halt(ctx, node, Status.NOT_ACCEPTABLE)
+
+
+def _representation_headers(ctx: Ctx, base: dict[str, str]) -> dict[str, str]:
+    """Entity headers for a body-bearing response: Content-Type, the negotiated
+    Content-Language, and the caller's base headers."""
+
+    headers = {"Content-Type": ctx.chosen_media_type or "", **base}
+    if ctx.chosen_language is not None:
+        headers["Content-Language"] = ctx.chosen_language
+    return headers
 
 
 async def _cache_headers(resource: Resource[Any], ctx: Ctx) -> dict[str, str]:

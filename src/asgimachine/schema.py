@@ -95,9 +95,13 @@ def _auto_error_statuses(resource: Resource[Any], method: str) -> set[int]:
         statuses.add(451)
     if method in _EXISTENCE_METHODS and _overrides(resource, "resource_exists"):
         statuses.add(404)
-    if method in _READ_METHODS and not resource.IGNORE_UNACCEPTABLE:
-        # Negotiation runs for a representation — unless the resource declares it
-        # disregards an unsatisfiable Accept (serves the default instead of 406).
+    offers_variants = bool(resource.LANGUAGES or resource.ENCODINGS)
+    if not resource.IGNORE_UNACCEPTABLE and (
+        method in _READ_METHODS or offers_variants
+    ):
+        # Negotiation runs for a representation (Accept), and for any offered
+        # language/encoding axis (which can 406 on writes too) — unless the
+        # resource disregards an unsatisfiable Accept (serves the default instead).
         statuses.add(406)
     if method in _BODY_METHODS:
         if resource.CONSUMES:

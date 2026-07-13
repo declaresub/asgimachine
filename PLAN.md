@@ -270,6 +270,23 @@ outbox/event-feed case. This is where the caching nodes pay off hardest:
 archived feed pages are `Cache-Control: immutable`, stable-ETag, 304-friendly,
 CDN-cacheable. (This is the endpoint class that most rewards the whole exercise.)
 
+The D and F axes are ✅ *done*: `LANGUAGES`/`ENCODINGS` declarations (each parallel
+to `PRODUCES`, read through a thin `languages`/`encodings` callback), negotiated at
+nodes **D5**/**F7** (traced only when the axis is offered, so the canonical trace is
+unchanged otherwise). An offered-but-unsatisfiable `Accept-*` is a 406 (serve-
+anyway honored); the choice sets `Content-Language`, adds the axis to `Vary`, and
+is exposed on `ctx.chosen_language`/`chosen_encoding`. Language uses RFC 4647
+lookup matching; `identity` is a default-acceptable coding (RFC 9110 §12.5.3). The
+graph negotiates and advertises but does **not** compress — that stays in Layer 2
+(substrate/proxy); a representation reads `ctx.chosen_*` to produce the bytes.
+
+**Charset (webmachine's E nodes) is deliberately omitted.** RFC 9110 §12.5.2
+deprecates `Accept-Charset` (UTF-8 is ubiquitous; a charset list wastes bandwidth
+and eases passive fingerprinting; UAs no longer send it). Charset rides on the
+Content-Type `charset` parameter now, not a negotiation axis — and letting a
+deprecated request header force a hard 406 would run against the spec's guidance.
+A resource that needs a charset stamps it on Content-Type itself.
+
 ### Phase v4 (backlog) — RFC-completeness from the http-decision-diagram
 Sourced from the for-GET **`http-decision-diagram`** (Andrei Neculau) — a more
 RFC-complete rewrite of webmachine's flowchart. Same spine as ours; every item
@@ -289,8 +306,8 @@ concrete need appears.
   declares `IGNORE_UNACCEPTABLE = True` disregards it and serves `PRODUCES[0]`
   instead of 406. A declaration read through the thin `ignore_unacceptable(ctx)`
   callback (§2.7), so the schema drops 406 from the surface when it is set;
-  default `False` preserves the hard 406. (Applies to `Accept` only — the
-  `Accept-Language`/`Charset`/`Encoding` axes aren't negotiated yet.)
+  default `False` preserves the hard 406. (Extended in v3 to every negotiated
+  axis — `Accept` and the D/E/F `Accept-Language`/`Charset`/`Encoding`.)
 - **Alternative-response-body negotiation** (the diagram's `is response
   alternative` → `alternative … to content` tail). ✅ *Done* (as **error bodies**).
   Every 4xx/5xx halt now carries a body, negotiated over `ERROR_PRODUCES` *after*
