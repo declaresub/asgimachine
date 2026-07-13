@@ -18,10 +18,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       # Actions are pinned to full commit SHAs (supply-chain hardening).
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -43,3 +47,50 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+  # Supply-chain / workflow-security gates. Runs on every PR (no path filter) so
+  # it can be a required check. External tools are pinned + checksum-verified.
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      OSV_SCANNER_VERSION: v2.4.0
+      OSV_SCANNER_SHA256: 15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      # Audits the workflows themselves: SHA-pinning, token scope, credential
+      # persistence, template injection, impostor/vulnerable actions.
+      - name: zizmor (Actions security audit)
+        # Offline for a deterministic gate: the online-only audits
+        # (known-vulnerable-actions/impostor) depend on the GitHub API and can
+        # hard-fail a required check. Dependabot covers vulnerable-action alerts.
+        run: uvx zizmor@1.11.0 --offline .github/workflows/
+
+      # Workflow linter — pinned binary, checksum-verified (not a marketplace action).
+      - name: actionlint
+        run: |
+          curl -fsSL -o actionlint.tgz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tgz" | sha256sum -c -
+          tar -xzf actionlint.tgz actionlint
+          ./actionlint
+
+      # Dependency vulnerability scan against the hash-locked closure.
+      - name: osv-scanner
+        run: |
+          curl -fsSL -o osv-scanner \
+            "https://github.com/google/osv-scanner/releases/download/${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  osv-scanner" | sha256sum -c -
+          chmod +x osv-scanner
+          ./osv-scanner scan --lockfile uv.lock
