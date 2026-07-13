@@ -331,7 +331,9 @@ concrete need appears.
   No sink by default (nothing emitted); `LoggingEventSink` is the reference, wired
   at `build_app(event_sink=...)`. A broken sink is swallowed — observability never
   breaks the request. The `on_exception` handler is where an error reporter records
-  a report id onto `ctx.event` before emit.
+  a report id onto `ctx.event` before emit. The **command lane** emits a thinner
+  event through the same sink (no decision path, but the same OTel fields +
+  outcomes; `asgm.lane` = `resource`/`command` discriminates the two).
 - **Unexpected-exception catch-all** (`on_exception`). ✅ *Done* (observability
   groundwork). `run()` catches `Exception` (never `BaseException` — a client
   disconnect/cancellation always propagates + rolls back) and hands it to a

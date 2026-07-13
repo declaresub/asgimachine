@@ -67,3 +67,33 @@ class LoggingEventSink:
             event.get("http.response.status_code", "-"),
             extra={"event": dict(event)},
         )
+
+
+_log = logging.getLogger("asgimachine.event")
+
+
+# Not exported (absent from the package __all__); shared by both request lanes.
+def emit_event(sink: EventSink | None, event: Event) -> None:
+    """Emit through the sink, swallowing sink errors — observability must never
+    break the request. A no-op without a sink."""
+
+    if sink is None:
+        return
+    try:
+        sink.emit(event)
+    except Exception:  # noqa: BLE001 — a broken sink is not a request failure
+        _log.exception("event sink failed")
+
+
+def outcome(status: int | None, exc: BaseException | None) -> str:
+    """The ``asgm.outcome`` label from a response status and/or in-flight exception."""
+
+    if exc is not None:
+        return "propagated" if status is None else "error"
+    if status is None:
+        return "unknown"
+    if status >= 500:
+        return "error"
+    if status >= 400:
+        return "halt"
+    return "ok"

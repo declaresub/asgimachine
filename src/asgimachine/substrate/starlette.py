@@ -8,6 +8,7 @@ a ``Starlette`` app that routes to resources through :func:`core.run`.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from starlette.applications import Starlette
@@ -16,6 +17,7 @@ from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
 from ..core import run
+from ..event import emit_event, outcome
 from ..http import (
     DEFAULT_MAX_BODY_BYTES,
     BodyMalformed,
@@ -196,16 +198,60 @@ def command_route(
     """
 
     async def endpoint(request: Request) -> Response:
+        started = perf_counter()
         wrapped = _StarletteRequest(request, max_body_bytes)
+        sink = getattr(getattr(request, "app", None), "state", None)
+        sink = getattr(sink, "event_sink", None)
+        status: int | None = None
+        exc: BaseException | None = None
         try:
-            return _to_starlette(await command.handle(wrapped))
+            response = _to_starlette(await command.handle(wrapped))
+            status = response.status_code
+            return response
         except BodyTooLarge:
-            return Response(status_code=int(Status.REQUEST_ENTITY_TOO_LARGE))
+            status = int(Status.REQUEST_ENTITY_TOO_LARGE)
+            return Response(status_code=status)
         except BodyMalformed:
-            return Response(status_code=int(Status.BAD_REQUEST))
+            status = int(Status.BAD_REQUEST)
+            return Response(status_code=status)
+        except BaseException as raised:  # emit, then propagate (no graph 500 here)
+            exc = raised
+            raise
+        finally:
+            _emit_command_event(sink, command, request, status, exc, started)
 
     endpoint.__name__ = type(command).__name__
     return Route(path, endpoint, methods=list(methods))
+
+
+def _emit_command_event(
+    sink: EventSink | None,
+    command: Command,
+    request: Request,
+    status: int | None,
+    exc: BaseException | None,
+    started: float,
+) -> None:
+    """The command lane's thin wide event — no graph, so no decision path, but the
+    same sink, OTel field names, and outcomes as the resource lane."""
+
+    if sink is None:
+        return
+    event: dict[str, object] = {
+        "http.request.method": request.method,
+        "url.path": request.url.path,
+        "asgm.lane": "command",
+        "asgm.command": type(command).__name__,
+        "asgm.outcome": outcome(status, exc),
+        "duration_ms": round((perf_counter() - started) * 1000, 3),
+    }
+    if status is not None:
+        event["http.response.status_code"] = status
+    if exc is not None:
+        event["exception.type"] = type(exc).__qualname__
+        event["exception.message"] = str(exc)
+        event["error.type"] = type(exc).__qualname__
+    emit_event(sink, event)
 
 
 def build_app(

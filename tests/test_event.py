@@ -11,9 +11,11 @@ from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 
 from starlette.testclient import TestClient
 
+from asgimachine.command import Command, json_response
 from asgimachine.event import Event
+from asgimachine.http import HttpResponse, Status
 from asgimachine.resource import Ctx, Resource
-from asgimachine.substrate.starlette import build_app, resource_route
+from asgimachine.substrate.starlette import build_app, command_route, resource_route
 
 
 class CaptureSink:
@@ -193,3 +195,60 @@ def test_event_type_is_a_plain_dict() -> None:
     ev: Event = {}
     ev["k"] = 1
     assert ev == {"k": 1}
+
+
+# --- command lane: a thin event through the same sink -----------------------
+
+
+def _cmd_client(command, *, sink=None, rse=True):
+    app = build_app([command_route("/cmd", command)], event_sink=sink)
+    return TestClient(app, raise_server_exceptions=rse)
+
+
+class Echo(Command):
+    async def handle(self, request) -> HttpResponse:
+        return json_response({"ok": True})
+
+
+def test_command_emits_thin_event() -> None:
+    sink = CaptureSink()
+    resp = _cmd_client(Echo(), sink=sink).post("/cmd")
+    assert resp.status_code == 200
+    assert len(sink.events) == 1
+    ev = sink.events[0]
+    assert ev["asgm.lane"] == "command"
+    assert ev["asgm.command"] == "Echo"
+    assert ev["http.request.method"] == "POST"
+    assert ev["url.path"] == "/cmd"
+    assert ev["http.response.status_code"] == 200
+    assert ev["asgm.outcome"] == "ok"
+    assert isinstance(ev["duration_ms"], float)
+    assert "asgm.decision_path" not in ev  # no graph in this lane
+
+
+def test_command_client_error_is_halt() -> None:
+    class Rejects(Command):
+        async def handle(self, request) -> HttpResponse:
+            return json_response({"error": "nope"}, status=Status.BAD_REQUEST)
+
+    sink = CaptureSink()
+    resp = _cmd_client(Rejects(), sink=sink).post("/cmd")
+    assert resp.status_code == 400
+    ev = sink.events[0]
+    assert ev["asgm.outcome"] == "halt"
+    assert ev["http.response.status_code"] == 400
+
+
+def test_command_exception_emits_propagated() -> None:
+    class CmdBoom(Command):
+        async def handle(self, request) -> HttpResponse:
+            raise RuntimeError("kaboom")
+
+    sink = CaptureSink()
+    _cmd_client(CmdBoom(), sink=sink, rse=False).post("/cmd")
+    assert len(sink.events) == 1
+    ev = sink.events[0]
+    assert ev["asgm.outcome"] == "propagated"
+    assert ev["exception.type"] == "RuntimeError"
+    assert ev["exception.message"] == "kaboom"
+    assert "http.response.status_code" not in ev

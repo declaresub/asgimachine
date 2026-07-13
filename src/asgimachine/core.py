@@ -9,7 +9,6 @@ decides; any node may raise :class:`HaltResponse` to short-circuit.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime
@@ -19,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast, get_type_hints
 import anyio
 
 from .codec import DEFAULT_CODECS
+from .event import emit_event, outcome
 from .conditional import (
     http_date,
     if_match_matches,
@@ -48,8 +48,6 @@ if TYPE_CHECKING:
     from .event import EventSink
     from .http import HttpRequest
     from .resource import OnException
-
-_log = logging.getLogger("asgimachine.core")
 
 SAFE_METHODS = frozenset({"GET", "HEAD"})
 # Methods that carry a request body; the body-validation nodes (B9/B6/B5/B4) are
@@ -175,18 +173,6 @@ async def _teardown(
             await lifespan.__aexit__(type(exc), exc, exc.__traceback__)
 
 
-def _outcome(response: HttpResponse | None, exc: BaseException | None) -> str:
-    if exc is not None:
-        return "propagated" if response is None else "error"
-    if response is None:
-        return "unknown"
-    if response.status >= 500:
-        return "error"
-    if response.status >= 400:
-        return "halt"
-    return "ok"
-
-
 def _record_and_emit(
     sink: EventSink | None,
     ctx: Ctx,
@@ -196,17 +182,18 @@ def _record_and_emit(
     started: float,
 ) -> None:
     """Fill the core-owned fields on ``ctx.event`` (OTel semantic conventions +
-    the ``asgm.`` namespace) and emit it. A no-op without a sink; a sink that
-    raises is swallowed — observability must never break the request."""
+    the ``asgm.`` namespace) for the resource lane, and emit it."""
 
     if sink is None:
         return
+    status = response.status if response is not None else None
     ev = ctx.event
     ev["http.request.method"] = ctx.request.method
     ev["url.path"] = ctx.request.path
+    ev["asgm.lane"] = "resource"
     ev["asgm.resource"] = type(resource).__name__
     ev["asgm.decision_path"] = ctx.trace.header_value
-    ev["asgm.outcome"] = _outcome(response, exc)
+    ev["asgm.outcome"] = outcome(status, exc)
     ev["duration_ms"] = round((perf_counter() - started) * 1000, 3)
     if ctx.chosen_media_type is not None:
         ev["asgm.media_type"] = ctx.chosen_media_type
@@ -214,20 +201,17 @@ def _record_and_emit(
         ev["asgm.language"] = ctx.chosen_language
     if ctx.chosen_encoding is not None:
         ev["asgm.encoding"] = ctx.chosen_encoding
-    if response is not None:
-        ev["http.response.status_code"] = response.status
-        if response.status >= 400 and ctx.trace.nodes:
+    if status is not None:
+        ev["http.response.status_code"] = status
+        if status >= 400 and ctx.trace.nodes:
             ev["asgm.halted_at"] = ctx.trace.nodes[-1]
     if exc is not None:
         ev["exception.type"] = type(exc).__qualname__
         ev["exception.message"] = str(exc)
         ev["error.type"] = type(exc).__qualname__
-    elif response is not None and response.status >= 500:
-        ev["error.type"] = str(response.status)
-    try:
-        sink.emit(ev)
-    except Exception:  # noqa: BLE001 — a broken sink must not break the request
-        _log.exception("event sink failed")
+    elif status is not None and status >= 500:
+        ev["error.type"] = str(status)
+    emit_event(sink, ev)
 
 
 class _ClosingStream:
