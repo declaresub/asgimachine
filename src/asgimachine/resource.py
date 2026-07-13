@@ -44,6 +44,11 @@ Producer = Callable[["Ctx"], Awaitable[Any]]
 # a custom response). Configured app-wide at build_app, or overridden per resource.
 OnException = Callable[["Ctx", Exception], Awaitable["HttpResponse | None"]]
 
+# A Retry-After hint for an unavailable response: delta-seconds (an int) or an
+# HTTP-date (a datetime), per RFC 9110 §10.2.3. Returned by an availability
+# callback alongside a plain bool.
+RetryHint = int | datetime
+
 
 @dataclass(slots=True)
 class Ctx:
@@ -129,7 +134,11 @@ class Resource[C: Ctx = Ctx]:
         return self.ALLOWED_METHODS
 
     # --- B13 ---------------------------------------------------------------
-    async def service_available(self, ctx: C) -> bool:
+    async def service_available(self, ctx: C) -> bool | RetryHint:
+        # True = available. False = 503 with no hint. An int (delta-seconds) or a
+        # datetime (an HTTP-date) = 503 carrying a ``Retry-After`` header (RFC 9110
+        # §10.2.3) — e.g. return 30 during a brief maintenance window. (The same
+        # return type a future per-resource rate-limit node would use for 429.)
         return True
 
     # --- B11 ---------------------------------------------------------------
