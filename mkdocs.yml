@@ -1,0 +1,71 @@
+site_name: asgimachine
+site_description: A webmachine-style HTTP decision-graph framework for Python.
+repo_url: https://github.com/declaresub/asgimachine
+repo_name: declaresub/asgimachine
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - toc.follow
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: true
+            members_order: source
+            show_root_heading: true
+            show_symbol_type_heading: true
+            separate_signature: true
+            docstring_section_style: spacy
+            heading_level: 2
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Concepts:
+      - The decision graph: concepts/decision-graph.md
+      - Resources & callbacks: concepts/resources.md
+      - The two lanes: concepts/two-lanes.md
+      - Per-request lifespan: concepts/lifespan.md
+      - Negotiation & errors: concepts/negotiation.md
+  - Examples: examples.md
+  - API reference: reference.md

@@ -26,6 +26,10 @@ dev = [
     "uvicorn>=0.30",
     "pydantic>=2",
 ]
+docs = [
+    "mkdocs-material>=9.7.6",
+    "mkdocstrings[python]>=1.0.6",
+]
 
 [build-system]
 requires = ["hatchling"]
