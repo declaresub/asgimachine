@@ -31,11 +31,17 @@ def _reason(status: int) -> str:
 
 if TYPE_CHECKING:
     from .codec import Codec
-    from .http import HttpRequest
+    from .http import HttpRequest, HttpResponse
     from .schema import ResourceDescription
 
 # A producer turns the resolved context into a representation value (§6).
 Producer = Callable[["Ctx"], Awaitable[Any]]
+
+# The catch-all for an unexpected exception raised during the walk. Returns None
+# (-> the graph's standard 500), an HttpResponse (-> that response), or raises
+# (re-raise to propagate to the substrate's outer handler; raise HaltResponse for
+# a custom response). Configured app-wide at build_app, or overridden per resource.
+OnException = Callable[["Ctx", Exception], Awaitable["HttpResponse | None"]]
 
 
 @dataclass(slots=True)
@@ -242,6 +248,23 @@ class Resource[C: Ctx = Ctx]:
         # Override to add ``detail``/``instance``/custom members, render per
         # ``media_type``, or return None for an empty body.
         return {"type": "about:blank", "title": _reason(status), "status": status}
+
+    # --- unexpected exceptions ---------------------------------------------
+    async def on_exception(self, ctx: C, exc: Exception) -> HttpResponse | None:
+        # Catch-all for an *unexpected* exception raised during the walk. Only
+        # ``Exception`` reaches here — a client disconnect (``CancelledError``) and
+        # other ``BaseException``s always propagate (teardown + re-raise). Runs
+        # inside the walk with ``ctx`` in scope, so it is where you report the error
+        # and record its id onto ``ctx`` before the response is built.
+        #
+        # Default: **re-raise**, so the exception propagates to the substrate's
+        # outer handler (Starlette's ServerErrorMiddleware, an ASGI error reporter,
+        # ...) — behavior is unchanged unless you opt in. Return instead to have the
+        # graph own the 500: ``None`` -> the standard negotiated ``problem+json``
+        # body (via ``error_body``); an ``HttpResponse`` -> that response; or raise
+        # ``HaltResponse(...)`` for full control. Set a default for the whole app at
+        # ``build_app(on_exception=...)``; override here for one resource.
+        raise exc
 
     # --- write path (§4 v2) -----------------------------------------------
     # Body-validation nodes. Traversed only for body-bearing methods

@@ -319,6 +319,17 @@ concrete need appears.
   gets a body); redirects/304 keep empty bodies; HEAD sends headers only. Produced
   centrally in `run()`'s halt handler. (The 300 `multiple_choices` body keeps its
   existing main-negotiated path.)
+- **Unexpected-exception catch-all** (`on_exception`). ✅ *Done* (observability
+  groundwork). `run()` catches `Exception` (never `BaseException` — a client
+  disconnect/cancellation always propagates + rolls back) and hands it to a
+  resolved handler: a resource override, else the app-level default
+  (`build_app(on_exception=...)`), else the base `Resource.on_exception` which
+  **re-raises** — so the default propagates to Starlette's `ServerErrorMiddleware`
+  exactly as before. A handler runs *inside* the walk with `ctx` in scope (so it can
+  report the error + record an id for the coming wide event), then returns `None`
+  (→ the graph's standard negotiated `problem+json` 500 + trace header), returns an
+  `HttpResponse`, or raises `HaltResponse`/re-raises. A handled 500 still feeds the
+  exception to lifespan teardown, so a transaction rolls back rather than commits.
 - **`uri_too_long?` → 414** (canonical node **B11**, between B12 and B10). ✅ *Done*
   — `uri_too_long(ctx)` callback, default `False` (deployments usually cap URI
   length at the server first), recorded only when it fires; the schema derives 414

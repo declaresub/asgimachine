@@ -38,13 +38,13 @@ from .negotiation import (
     choose_media_type,
     parse_content_type,
 )
-from .resource import Ctx
+from .resource import Ctx, Resource
 from .trace import TRACE_HEADER
 
 if TYPE_CHECKING:
     from .codec import Codec
     from .http import HttpRequest
-    from .resource import Resource
+    from .resource import OnException
 
 SAFE_METHODS = frozenset({"GET", "HEAD"})
 # Methods that carry a request body; the body-validation nodes (B9/B6/B5/B4) are
@@ -58,12 +58,16 @@ async def run(
     *,
     debug: bool = False,
     codecs: dict[str, Codec] | None = None,
+    on_exception: OnException | None = None,
 ) -> HttpResponse:
     """Walk the graph for one request and return an HttpResponse value object.
 
     In ``debug`` mode the ordered node path is attached as the
     ``X-Asgimachine-Trace`` response header on every exit path (§9). ``codecs``
-    is the media-type -> Codec registry (defaults to JSON only).
+    is the media-type -> Codec registry (defaults to JSON only). ``on_exception``
+    is the app-level catch-all for an unexpected ``Exception`` (a resource may
+    override it); it defaults to re-raising, so the exception propagates to the
+    substrate's outer handler unless a handler opts to own the 500.
     """
 
     ctx = resource.context_class(
@@ -81,12 +85,21 @@ async def run(
     await lifespan.__aenter__()
     streaming = False
     torn_down = False
+    # The unexpected exception, once handled into a response — fed to teardown so a
+    # lifespan transaction still rolls back even though we return a 500, not raise.
+    handled_exc: Exception | None = None
     try:
         try:
             response = await _walk(resource, ctx)
         except HaltResponse as halt:
             response = halt.response
             await _apply_error_body(resource, ctx, response)
+        except Exception as exc:  # noqa: BLE001 — the graph-owned catch-all
+            # Exception only — a disconnect/cancellation is a BaseException and falls
+            # through to the teardown-and-reraise arm below. The handler may return a
+            # response, or re-raise (propagating to the arm below).
+            handled_exc = exc
+            response = await _handle_exception(resource, ctx, exc, on_exception)
         if debug:
             response.headers[TRACE_HEADER] = ctx.trace.header_value
         if response.is_stream:
@@ -99,17 +112,20 @@ async def run(
             streaming = True
         return response
     except BaseException as exc:
-        # A real error or a cancellation (client disconnect): tear down with the
-        # exception in flight so a lifespan transaction rolls back, then re-raise.
+        # A propagated error (the handler re-raised) or a cancellation (client
+        # disconnect): tear down with the exception in flight so a lifespan
+        # transaction rolls back, then re-raise.
         torn_down = True
         await _teardown(lifespan, exc)
         raise
     finally:
-        # Non-streaming success/halt: release here, exactly once — in a finally so
-        # a throw anywhere above (debug header, stream wrap) can't skip it. The
-        # streaming path transferred ownership; the error path already released.
+        # Non-streaming success/halt/handled-500: release here, exactly once — in a
+        # finally so a throw anywhere above can't skip it. A handled exception is
+        # fed in so the transaction still rolls back (the contextmanager absorbs the
+        # expected re-raise). The streaming path transferred ownership; the
+        # propagate path already released.
         if not streaming and not torn_down:
-            await _teardown(lifespan, None)
+            await _teardown(lifespan, handled_exc)
 
 
 # Cap on the shielded (otherwise uninterruptible) teardown window, so a lifespan
@@ -218,6 +234,40 @@ async def _apply_error_body(
     if ctx.request.method != "HEAD":
         codec = ctx.codecs.get(media)
         response.body = codec.encode(value) if codec is not None else serialize(value)
+
+
+async def _handle_exception(
+    resource: Resource[Any],
+    ctx: Ctx,
+    exc: Exception,
+    app_handler: OnException | None,
+) -> HttpResponse:
+    """Give the resolved ``on_exception`` handler first crack at an unexpected
+    exception, then return the resulting 500 (or let a re-raise propagate).
+
+    Resolution: a resource override wins; else the app-level default; else the base
+    ``Resource.on_exception`` (which re-raises). The handler returns ``None`` (the
+    standard negotiated 500 body), an ``HttpResponse``, or raises ``HaltResponse``
+    for a custom response — anything else re-raises out of here to propagate.
+    """
+
+    if app_handler is not None and type(resource).on_exception is Resource.on_exception:
+        outcome = app_handler(ctx, exc)
+    else:
+        outcome = resource.on_exception(ctx, exc)
+
+    try:
+        result = await outcome
+    except HaltResponse as halt:
+        response = halt.response
+    else:
+        response = (
+            result
+            if result is not None
+            else HttpResponse(status=int(Status.INTERNAL_SERVER_ERROR))
+        )
+    await _apply_error_body(resource, ctx, response)
+    return response
 
 
 def _allow_header(methods: frozenset[str]) -> str:
