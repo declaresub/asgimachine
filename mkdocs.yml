@@ -1,5 +1,6 @@
 site_name: asgimachine
 site_description: A webmachine-style HTTP decision-graph framework for Python.
+site_url: https://declaresub.github.io/asgimachine/
 repo_url: https://github.com/declaresub/asgimachine
 repo_name: declaresub/asgimachine
 edit_uri: edit/main/docs/
