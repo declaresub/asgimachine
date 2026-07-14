@@ -72,6 +72,7 @@ nav:
       - Accept a request body: guides/request-body.md
       - Read a path parameter: guides/path-parameters.md
       - Read a query argument: guides/query-string.md
+      - A per-request database connection: guides/database-connection.md
   - Concepts:
       - The decision graph: concepts/decision-graph.md
       - The graph, drawn: concepts/flowchart.md
