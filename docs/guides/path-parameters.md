@@ -113,7 +113,5 @@ async def resource_exists(self, ctx: NoteCtx) -> bool:
 
 !!! note "Path parameters vs. the query string"
     `path_params` is only the `{…}` segments of the *route*. Query-string arguments
-    (`?limit=20`) are a different thing — and the core `HttpRequest` doesn't surface
-    the query string today (`path` is the path only). If your resource needs query
-    arguments, that's a current gap rather than a pattern; treat `path_params` as the
-    routed inputs the graph gives you.
+    (`?limit=20`) are a different input, read from `ctx.request.query_params` — see
+    [Read a query argument](query-string.md).

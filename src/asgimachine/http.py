@@ -92,6 +92,15 @@ class HttpRequest(Protocol):
     def path_params(self) -> Mapping[str, str]: ...
 
     @property
+    def query_params(self) -> Mapping[str, str]:
+        """The parsed query string (``?limit=20`` -> ``{"limit": "20"}``).
+
+        A repeated key (``?tag=a&tag=b``) yields its *last* value through this
+        mapping; the substrate's concrete type may offer ``getlist`` for all of
+        them. Empty when there is no query string."""
+        ...
+
+    @property
     def route(self) -> str | None:
         """The matched route *template* (e.g. ``/notes/{id}``), or None if unrouted.
 

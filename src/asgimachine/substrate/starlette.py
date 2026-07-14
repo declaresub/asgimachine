@@ -75,6 +75,12 @@ class _StarletteRequest:
     def path_params(self) -> Mapping[str, str]:
         return self._request.path_params
 
+    @property
+    def query_params(self) -> Mapping[str, str]:
+        # Starlette's QueryParams is a case-sensitive multidict; as a Mapping it
+        # yields the last value per key, and offers .getlist() for repeats.
+        return self._request.query_params
+
     def _declared_length(self) -> int | None:
         raw = self._request.headers.get("content-length")
         if raw is None:
