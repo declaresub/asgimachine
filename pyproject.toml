@@ -3,7 +3,7 @@ name = "asgimachine"
 version = "0.0.0"
 description = "A webmachine-style HTTP decision-graph framework for Python."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 license = "MIT"
 authors = [{ name = "Charles Yeomans" }]
 dependencies = [
@@ -40,7 +40,7 @@ packages = ["src/asgimachine"]
 
 [tool.ruff]
 src = ["src", "tests", "examples"]
-target-version = "py314"
+target-version = "py313"
 
 [tool.ruff.lint]
 # Rule set per PLAN.md §3. E501 (line length) is deliberately off.
@@ -50,7 +50,7 @@ ignore = ["E501", "COM812", "ISC001"]
 
 [tool.pyright]
 include = ["src", "examples", "tests"]
-pythonVersion = "3.14"
+pythonVersion = "3.13"
 # Library code is held to strict; tests stay at standard — the TestClient/fixture
 # surface is loosely typed upstream and not worth annotating exhaustively.
 typeCheckingMode = "standard"

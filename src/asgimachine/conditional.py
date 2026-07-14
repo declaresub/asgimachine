@@ -84,7 +84,7 @@ def _parse_since(
         return None
     try:
         since = parsedate_to_datetime(header)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return None
     lm = last_modified if last_modified.tzinfo else last_modified.replace(tzinfo=UTC)
     if since.tzinfo is None:

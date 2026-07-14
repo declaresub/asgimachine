@@ -159,7 +159,7 @@ class TokenCommand(Command):
         try:
             body = json.loads(await request.body())
             username, password = body["username"], body["password"]
-        except ValueError, KeyError, TypeError, UnicodeDecodeError:
+        except (ValueError, KeyError, TypeError, UnicodeDecodeError):
             return json_response(
                 {"error": "invalid request"}, status=Status.BAD_REQUEST
             )

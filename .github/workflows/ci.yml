@@ -15,6 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Single job (stable name for the required-check ruleset), but pytest runs on the
+  # whole supported range — 3.13 (the floor: PEP 695/696 generics) and latest. A
+  # matrix would rename the check to `test (3.xx)` and silently block merges.
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -30,7 +33,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3 # v8.3.0
         with:
-          python-version: "3.14"
+          python-version: "3.13"
           enable-cache: true
 
       - name: Sync dependencies
@@ -45,8 +48,11 @@ jobs:
       - name: Type check
         run: uv run pyright
 
-      - name: Test
-        run: uv run pytest
+      - name: Test (3.13 — the floor)
+        run: uv run --python 3.13 pytest
+
+      - name: Test (3.14 — latest)
+        run: uv run --python 3.14 pytest
 
   # Supply-chain / workflow-security gates. Runs on every PR (no path filter) so
   # it can be a required check. External tools are pinned + checksum-verified.

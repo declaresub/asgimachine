@@ -23,7 +23,7 @@ everything else** (routing, the server, middleware) from
 [Starlette](https://www.starlette.io/), so it composes with that ecosystem instead
 of replacing it.
 
-> **Status:** experimental. Requires **Python 3.14+** (it uses PEP 695 generics and
+> **Status:** experimental. Requires **Python 3.13+** (it uses PEP 695 generics and
 > PEP 696 type-parameter defaults). The decision graph implements the v0–v3 subset
 > of webmachine; see [PLAN.md](PLAN.md) for the design and roadmap.
 

@@ -37,7 +37,7 @@ class EventsResource(Resource):
         # B9 -> 400. Parse the command body up front; stash it for the stream.
         try:
             ctx.extra["command"] = json.loads(await ctx.request.body())
-        except ValueError, UnicodeDecodeError:
+        except (ValueError, UnicodeDecodeError):
             return True
         return not isinstance(ctx.extra["command"], dict)
 

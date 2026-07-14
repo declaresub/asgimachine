@@ -576,7 +576,7 @@ async def _apply(resource: Resource[Any], ctx: Ctx) -> object:
     try:
         structured = codec.decode(raw)
         body = _parse_body(structured, _apply_body_type(resource))
-    except ValueError, TypeError, UnicodeDecodeError, RecursionError:
+    except (ValueError, TypeError, UnicodeDecodeError, RecursionError):
         # RecursionError: deeply nested input (json.loads / a recursive model)
         # exceeds the interpreter's depth — a malformed body, not a server fault,
         # so 400 rather than an escaped 500.
