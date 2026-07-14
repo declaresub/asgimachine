@@ -21,7 +21,8 @@ conventions where they exist; graph-specific fields live under `asgm.`.
 | Field | When | Meaning |
 |---|---|---|
 | `http.request.method` | always | the method |
-| `url.path` | always | the request path |
+| `url.path` | always | the concrete request path (`/notes/42`) |
+| `http.route` | when routed | the route *template* (`/notes/{id}`) — the low-cardinality grouping key |
 | `http.response.status_code` | if a response was produced | the status |
 | `duration_ms` | always | wall time from entry to emit |
 | `asgm.lane` | always | `resource` or `command` |

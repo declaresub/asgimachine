@@ -192,6 +192,8 @@ def _record_and_emit(
     ev = ctx.event
     ev["http.request.method"] = ctx.request.method
     ev["url.path"] = ctx.request.path
+    if ctx.request.route is not None:
+        ev["http.route"] = ctx.request.route  # low-cardinality template
     ev["asgm.lane"] = "resource"
     ev["asgm.resource"] = type(resource).__name__
     ev["asgm.decision_path"] = ctx.trace.header_value

@@ -42,12 +42,21 @@ if TYPE_CHECKING:
 class _StarletteRequest:
     """Adapts a Starlette ``Request`` to the core's ``HttpRequest`` protocol."""
 
-    __slots__ = ("_cached_body", "_max_bytes", "_request")
+    __slots__ = ("_cached_body", "_max_bytes", "_request", "_route")
 
-    def __init__(self, request: Request, max_bytes: int) -> None:
+    def __init__(
+        self, request: Request, max_bytes: int, route: str | None = None
+    ) -> None:
         self._request = request
         self._max_bytes = max_bytes
         self._cached_body: bytes | None = None
+        self._route = route
+
+    @property
+    def route(self) -> str | None:
+        # The route template, threaded from resource_route (Starlette doesn't put
+        # it in the scope). None for a request built outside a route (a test).
+        return self._route
 
     @property
     def method(self) -> str:
@@ -141,13 +150,17 @@ class _ResourceEndpoint:
     ``methods=["GET"]``.
     """
 
-    __slots__ = ("_codecs", "_resource")
+    __slots__ = ("_codecs", "_resource", "_route")
 
     def __init__(
-        self, resource: Resource[Any], codecs: dict[str, Codec] | None
+        self,
+        resource: Resource[Any],
+        codecs: dict[str, Codec] | None,
+        route: str | None = None,
     ) -> None:
         self._resource = resource
         self._codecs = codecs
+        self._route = route
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         request = Request(scope, receive)
@@ -158,7 +171,7 @@ class _ResourceEndpoint:
         state = getattr(app, "state", None)
         response = await run(
             self._resource,
-            _StarletteRequest(request, self._resource.MAX_BODY_BYTES),
+            _StarletteRequest(request, self._resource.MAX_BODY_BYTES, self._route),
             debug=debug,
             codecs=self._codecs,
             on_exception=getattr(state, "on_exception", None),
@@ -176,7 +189,9 @@ def resource_route(
     """
 
     return Route(
-        path, _ResourceEndpoint(resource, codecs), name=type(resource).__name__
+        path,
+        _ResourceEndpoint(resource, codecs, route=path),
+        name=type(resource).__name__,
     )
 
 
@@ -218,7 +233,7 @@ def command_route(
             exc = raised
             raise
         finally:
-            _emit_command_event(sink, command, request, status, exc, started)
+            _emit_command_event(sink, command, request, path, status, exc, started)
 
     endpoint.__name__ = type(command).__name__
     return Route(path, endpoint, methods=list(methods))
@@ -228,6 +243,7 @@ def _emit_command_event(
     sink: EventSink | None,
     command: Command,
     request: Request,
+    route: str,
     status: int | None,
     exc: BaseException | None,
     started: float,
@@ -240,6 +256,7 @@ def _emit_command_event(
     event: dict[str, object] = {
         "http.request.method": request.method,
         "url.path": request.url.path,
+        "http.route": route,
         "asgm.lane": "command",
         "asgm.command": type(command).__name__,
         "asgm.outcome": outcome(status, exc),

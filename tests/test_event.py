@@ -64,6 +64,16 @@ def test_no_sink_does_not_break_the_request() -> None:
     assert _client(Ok()).get("/r").status_code == 200
 
 
+def test_http_route_is_the_template_not_the_path() -> None:
+    app = build_app([resource_route("/notes/{id}", Ok())], debug=True)
+    sink = CaptureSink()
+    app.state.event_sink = sink
+    TestClient(app).get("/notes/42")
+    ev = sink.events[0]
+    assert ev["url.path"] == "/notes/42"  # concrete
+    assert ev["http.route"] == "/notes/{id}"  # low-cardinality template
+
+
 # --- resource enrichment -----------------------------------------------------
 
 
@@ -220,6 +230,7 @@ def test_command_emits_thin_event() -> None:
     assert ev["asgm.command"] == "Echo"
     assert ev["http.request.method"] == "POST"
     assert ev["url.path"] == "/cmd"
+    assert ev["http.route"] == "/cmd"
     assert ev["http.response.status_code"] == 200
     assert ev["asgm.outcome"] == "ok"
     assert isinstance(ev["duration_ms"], float)
