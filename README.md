@@ -170,6 +170,7 @@ Runnable apps in [`examples/`](examples/) (`uvicorn examples.<name>:app --reload
 | `accounts` | a pure-read resource with conditional GET |
 | `feed` | immutable, CDN-cacheable feed pages (the outbox case) |
 | `events` | Server-Sent Events streaming through the graph |
+| `unpoly` | HTML fragments for [Unpoly](https://unpoly.com): conditional-GET polling (`304`) + POST-Redirect-Get, one URL negotiated on `X-Up-Version` |
 | `connection` | per-request DB connection via `lifespan` |
 | `notes_app` | the full gradient: collection + member resources, the command lane, an auth policy, and self-served OpenAPI |
 

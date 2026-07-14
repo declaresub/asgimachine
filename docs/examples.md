@@ -12,6 +12,7 @@ uvicorn examples.<name>:app --reload
 | `accounts` | a pure-read resource with conditional GET (the canonical adoption target) |
 | `feed` | immutable, CDN-cacheable feed pages — the outbox case |
 | `events` | Server-Sent Events streaming *through* the graph |
+| `unpoly` | HTML fragments for [Unpoly](https://unpoly.com): conditional-GET polling, POST-Redirect-Get, one URL negotiated on `X-Up-Version` |
 | `connection` | per-request DB connection via [`lifespan`](concepts/lifespan.md) |
 | `notes_app` | the full gradient: collection + member resources, the command lane, an auth policy, and self-served OpenAPI |
 
@@ -42,4 +43,20 @@ nothing new arrived).
 ```bash
 curl -i localhost:8000/feed/0     # archived -> immutable
 curl -i localhost:8000/feed/2     # head -> no-cache, revalidate
+```
+
+## Hypermedia frontends (`unpoly`)
+
+[Unpoly](https://unpoly.com) is the frontend library that most rewards a
+correct-by-construction backend: it reads a response's `ETag`, stores it against
+the fragment, and re-sends it as `If-None-Match` on every poll — so the `304` the
+graph already emits *is* the poll's fast path. One resource at `/` serves the full
+page to a browser navigation and a bare `#notes` fragment to Unpoly (which sends an
+`X-Up-Version` header), with that axis declared in both `Vary` and the `ETag` so the
+two representations never collide. Writes are POST-Redirect-Get: `apply` parses the
+urlencoded form into a typed model, and `see_other` returns `303 → /`.
+
+```bash
+curl -i localhost:8000/                          # full page
+curl -i localhost:8000/ -H 'X-Up-Version: 3'     # just the #notes fragment
 ```
