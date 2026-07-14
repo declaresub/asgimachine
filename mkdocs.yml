@@ -70,6 +70,7 @@ nav:
   - Quickstart: quickstart.md
   - Guides:
       - Accept a request body: guides/request-body.md
+      - Read a path parameter: guides/path-parameters.md
   - Concepts:
       - The decision graph: concepts/decision-graph.md
       - The graph, drawn: concepts/flowchart.md
