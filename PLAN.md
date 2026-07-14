@@ -215,7 +215,7 @@ asgimachine/
 Dependency direction: `substrate.starlette → core → resource/command → http`.
 Nothing in `core`/`resource`/`http` imports `starlette`.
 
-Tooling: Python 3.14, `uv`, `ruff` (rule set F,E,UP,ASYNC,BLE,COM,C4,T20,RUF,ISC;
+Tooling: Python 3.13+ (dev on 3.14), `uv`, `ruff` (rule set F,E,UP,ASYNC,BLE,COM,C4,T20,RUF,ISC;
 E501 off), `pytest` + `pytest-asyncio`, `pytest-cov`. Hardened CI (pinned
 actions, minimal permissions). Packaged for PyPI; released when it graduates past
 its own example app + conformance suite.

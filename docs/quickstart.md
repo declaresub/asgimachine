@@ -9,7 +9,7 @@ uv add "git+https://github.com/declaresub/asgimachine"
 # or: pip install "git+https://github.com/declaresub/asgimachine"
 ```
 
-asgimachine requires **Python 3.14+**.
+asgimachine requires **Python 3.13+**.
 
 ## A first resource
 

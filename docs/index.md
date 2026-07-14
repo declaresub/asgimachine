@@ -11,7 +11,7 @@ graph. You override only the callbacks your resource actually cares about; every
 one ships a correct HTTP default.
 
 !!! warning "Status"
-    Experimental. Requires **Python 3.14+** (PEP 695 generics, PEP 696
+    Experimental. Requires **Python 3.13+** (PEP 695 generics, PEP 696
     type-parameter defaults). The graph implements the v0–v3 subset of webmachine
     plus a slice of RFC-completeness extensions.
 
