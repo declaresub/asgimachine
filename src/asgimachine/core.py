@@ -583,11 +583,28 @@ async def _apply(resource: Resource[Any], ctx: Ctx) -> object:
     return await resource.apply(ctx, body)
 
 
-def _finish(
-    ctx: Ctx, status: Status, value: object, headers: dict[str, str]
+async def _finish(
+    resource: Resource[Any],
+    ctx: Ctx,
+    status: Status,
+    value: object,
+    headers: dict[str, str],
 ) -> HttpResponse:
-    """O20: a None entity yields 204 (or keeps 201/etc.); a value yields a body."""
+    """Frame a write result. O20a ``accepted`` -> 202 + Location (the async
+    request-reply hand-off); else O20: a None entity yields 204 (or keeps
+    201/etc.), a value yields a body."""
 
+    monitor = await resource.accepted(ctx)
+    if monitor is not None:
+        ctx.trace.record("O20a", int(Status.ACCEPTED))
+        headers = {**headers, "Location": monitor}
+        if value is None:
+            return HttpResponse(status=int(Status.ACCEPTED), headers=headers)
+        return HttpResponse(
+            status=int(Status.ACCEPTED),
+            headers=_representation_headers(ctx, headers),
+            body=_body(value, head=False, ctx=ctx),
+        )
     if value is None:
         final = Status.NO_CONTENT if status is Status.OK else status
         ctx.trace.record("O20", int(final))
@@ -623,13 +640,15 @@ async def _post(
         redirect = await resource.see_other(ctx)
         if redirect is not None:
             return _see_other(ctx, redirect, headers)
-        return _finish(ctx, Status.CREATED, value, {**headers, "Location": location})
+        return await _finish(
+            resource, ctx, Status.CREATED, value, {**headers, "Location": location}
+        )
     ctx.trace.record("N11", False)
     value = await resource.process_post(ctx)
     redirect = await resource.see_other(ctx)
     if redirect is not None:
         return _see_other(ctx, redirect, headers)
-    return _finish(ctx, Status.OK, value, headers)
+    return await _finish(resource, ctx, Status.OK, value, headers)
 
 
 def _see_other(ctx: Ctx, url: str, headers: dict[str, str]) -> HttpResponse:
@@ -650,7 +669,7 @@ async def _write(
         raise _halt(ctx, "O14", Status.CONFLICT)
     ctx.trace.record("O14", False)
     value = await _apply(resource, ctx)
-    return _finish(ctx, Status.OK, value, headers)
+    return await _finish(resource, ctx, Status.OK, value, headers)
 
 
 async def _handle_missing(
@@ -669,7 +688,7 @@ async def _handle_missing(
             raise _halt(ctx, "P3", Status.CONFLICT)
         ctx.trace.record("P3", False)
         value = await _apply(resource, ctx)
-        return _finish(ctx, Status.CREATED, value, {})
+        return await _finish(resource, ctx, Status.CREATED, value, {})
 
     # K7 previously_existed? -> K5 moved_permanently 301 / L5 moved_temporarily
     # 307 / else 410 Gone.

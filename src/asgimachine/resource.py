@@ -382,6 +382,16 @@ class Resource[C: Ctx = Ctx]:
         # 200 (action) normally. The URL overrides the created/action response.
         return None
 
+    async def accepted(self, ctx: C) -> str | None:  # O20a -> 202
+        # After a write handler *enqueues* work it can't finish inside the request
+        # budget, return a URL to a status-monitor resource: the graph responds 202
+        # Accepted + Location instead of framing a completed 200/201/204 — the
+        # asynchronous request-reply pattern (hand off to a background task, let the
+        # client poll the monitor). None (the default) frames the result normally.
+        # Applies to POST/PUT/PATCH; DELETE has its own 202 via delete_completed.
+        # Mutually exclusive with see_other (which, on POST, is checked first).
+        return None
+
     # --- G7-false branch: the resource does not (currently) exist ----------
     async def previously_existed(self, ctx: C) -> bool:  # K7
         # True routes a missing resource to redirect/gone handling.
