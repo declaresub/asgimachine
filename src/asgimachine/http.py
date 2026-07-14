@@ -63,6 +63,7 @@ class Status(IntEnum):
     REQUEST_ENTITY_TOO_LARGE = 413
     URI_TOO_LONG = 414  # B11: request target too long
     UNSUPPORTED_MEDIA_TYPE = 415
+    PRECONDITION_REQUIRED = 428  # RFC 6585: a write must be conditional
     UNAVAILABLE_FOR_LEGAL_REASONS = 451  # RFC 7725
     INTERNAL_SERVER_ERROR = 500
     NOT_IMPLEMENTED = 501

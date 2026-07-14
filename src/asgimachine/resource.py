@@ -174,6 +174,15 @@ class Resource[C: Ctx = Ctx]:
     async def last_modified(self, ctx: C) -> datetime | None:
         return None
 
+    # --- precondition-required (428, RFC 6585) -----------------------------
+    async def require_conditional_write(self, ctx: C) -> bool:
+        # True demands that a PUT/PATCH/DELETE carry an update precondition
+        # (``If-Match`` or ``If-Unmodified-Since``); an unconditional write is a
+        # 428, so a client can't blindly overwrite state it hasn't seen — the
+        # "lost update" guard. Default False. A *present* precondition still flows
+        # through the normal 412 path; 428 fires only when none was sent.
+        return False
+
     # O18 -> 300. When the resource offers several representations and wants the
     # client to choose, return 300 with the list (from PRODUCES). Default: pick
     # one via negotiation and return 200.

@@ -353,9 +353,15 @@ concrete need appears.
   *Done* — `see_other(ctx)` returns a URL to redirect to with 303 *after* the POST's
   side effects run (create/apply or `process_post`), overriding the 201/200. Node
   **N11a**; `None` (default) keeps the normal create/action response.
+- **`428 Precondition Required`** (RFC 6585). ✅ *Done* — node **W1**:
+  `require_conditional_write` (default False) makes an *unconditional* PUT/PATCH/DELETE
+  a 428, so a client can't blindly overwrite unseen state (the lost-update guard). An
+  `If-Match`/`If-Unmodified-Since` flows on to the normal 412 path; traced only when it
+  fires; the schema derives 428 for those methods when overridden. A per-resource HTTP
+  policy the graph should own — the completion of the conditional-request machinery.
 - **Explicitly out of scope — rent, don't model:** Expect/`100-continue` (100 /
-  417) is a transport handshake uvicorn/ASGI answers below us (§2.1); `428`/`431`
-  are thin gates worth adding only on demand.
+  417) is a transport handshake uvicorn/ASGI answers below us (§2.1); `431`
+  (headers too large) is a substrate/server gate like `414`.
 - **Rate limiting / `429`.** *Global* rate limiting is edge/middleware (traffic, not
   a resource property — rejected before routing, before the lifespan). *Per-resource*
   quota (e.g. a login endpoint) is a genuine resource property, and would be a B13
