@@ -62,6 +62,14 @@ Generated from the source docstrings.
 
 ::: asgimachine.event.LoggingEventSink
 
+## Streaming
+
+::: asgimachine.streaming.sse_event
+
+::: asgimachine.streaming.sse_error
+
+::: asgimachine.streaming.guard_sse
+
 ## Starlette substrate
 
 ::: asgimachine.substrate.starlette.build_app
