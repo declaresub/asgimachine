@@ -15,6 +15,7 @@ class FakeRequest:
     headers: dict[str, str] = field(default_factory=dict)
     path_params: dict[str, str] = field(default_factory=dict)
     route: str | None = None
+    query_params: dict[str, str] = field(default_factory=dict)
 
     async def body(self) -> bytes:
         return b""
