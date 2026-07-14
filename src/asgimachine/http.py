@@ -91,6 +91,14 @@ class HttpRequest(Protocol):
     @property
     def path_params(self) -> Mapping[str, str]: ...
 
+    @property
+    def route(self) -> str | None:
+        """The matched route *template* (e.g. ``/notes/{id}``), or None if unrouted.
+
+        The low-cardinality grouping key for the wide event (``http.route``), as
+        distinct from ``path`` (the concrete ``/notes/42``)."""
+        ...
+
     async def body(self) -> bytes:
         """The buffered request body.
 
