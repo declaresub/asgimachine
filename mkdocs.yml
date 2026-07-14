@@ -74,6 +74,7 @@ nav:
       - Read a query argument: guides/query-string.md
       - A per-request database connection: guides/database-connection.md
       - Return a specific outcome: guides/response-outcomes.md
+      - Conditional GET & caching: guides/conditional-caching.md
   - Concepts:
       - The decision graph: concepts/decision-graph.md
       - The graph, drawn: concepts/flowchart.md
