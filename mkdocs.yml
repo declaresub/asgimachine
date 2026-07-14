@@ -52,7 +52,11 @@ markdown_extensions:
   - admonition
   - tables
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.inlinehilite
   - pymdownx.highlight:
       anchor_linenums: true
@@ -64,6 +68,7 @@ nav:
   - Quickstart: quickstart.md
   - Concepts:
       - The decision graph: concepts/decision-graph.md
+      - The graph, drawn: concepts/flowchart.md
       - Resources & callbacks: concepts/resources.md
       - The two lanes: concepts/two-lanes.md
       - Per-request lifespan: concepts/lifespan.md
