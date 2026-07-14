@@ -127,6 +127,8 @@ def _auto_error_statuses(resource: Resource[Any], method: str) -> set[int]:
         resource, "require_conditional_write"
     ):
         statuses.add(428)
+    if method in _BODY_METHODS and _overrides(resource, "accepted"):
+        statuses.add(202)  # async request-reply hand-off (O20a)
     return statuses
 
 

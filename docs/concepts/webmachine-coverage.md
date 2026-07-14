@@ -61,6 +61,7 @@ traced only when it fires and never disturbs the canonical path.
 | K5a | Permanent method-preserving redirect | 308 (RFC 7538) | `permanent_redirect` |
 | C4a | Serve-anyway (disregard an unsatisfiable `Accept`) | default instead of 406 (RFC 9110 §12.1) | `ignore_unacceptable` / `IGNORE_UNACCEPTABLE` |
 | W1 | Precondition required (unconditional write) | 428 (RFC 6585) | `require_conditional_write` |
+| O20a | Async request-reply hand-off (write enqueued) | 202 + `Location` | `accepted` |
 | P0 | Body parse (parse, don't validate) | 400 | `apply`'s typed `body` |
 | — | Negotiated error bodies | RFC 9457 `problem+json` on every 4xx/5xx | `error_body` / `ERROR_PRODUCES` |
 

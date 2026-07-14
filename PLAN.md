@@ -353,6 +353,14 @@ concrete need appears.
   *Done* — `see_other(ctx)` returns a URL to redirect to with 303 *after* the POST's
   side effects run (create/apply or `process_post`), overriding the 201/200. Node
   **N11a**; `None` (default) keeps the normal create/action response.
+- **`202 Accepted` async hand-off** (asynchronous request-reply). ✅ *Done* — node
+  **O20a**: `accepted(ctx)` returns a status-monitor URL, so a write that enqueues
+  work it can't finish inside the request budget responds `202 Accepted` + `Location`
+  instead of framing a completed 200/201/204. The correct answer to a platform
+  request cap (Heroku's 30s, an ALB timeout): hand off to a background task, poll the
+  monitor. Covers POST/PUT/PATCH (DELETE has its own 202 via `delete_completed`);
+  checked at `_finish`, additive, traced only when it fires; the schema derives 202.
+  The framework owns the HTTP shape (202 + monitor); the task runner/queue is rented.
 - **`428 Precondition Required`** (RFC 6585). ✅ *Done* — node **W1**:
   `require_conditional_write` (default False) makes an *unconditional* PUT/PATCH/DELETE
   a 428, so a client can't blindly overwrite unseen state (the lost-update guard). An
