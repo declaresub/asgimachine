@@ -58,6 +58,8 @@ markdown_extensions:
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
   - pymdownx.highlight:
       anchor_linenums: true
   - toc:
@@ -71,6 +73,7 @@ nav:
       - The graph, drawn: concepts/flowchart.md
       - Resources & callbacks: concepts/resources.md
       - The two lanes: concepts/two-lanes.md
+      - Build, model, or rent: concepts/build-model-rent.md
       - Per-request lifespan: concepts/lifespan.md
       - Negotiation & errors: concepts/negotiation.md
       - Observability & logging: concepts/observability.md
