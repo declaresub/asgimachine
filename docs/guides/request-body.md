@@ -111,6 +111,70 @@ The read happens in two steps, both replaceable:
 
 The parse is duck-typed on `model_validate`, which is why Pydantic isn't required.
 
+## More than one content type
+
+Because the codec normalizes bytes into a structure *before* the model sees it, one
+`apply` handles every content type you accept — the decode step differs, the model
+doesn't. To accept, say, JSON *and* HTML form posts, list both in `CONSUMES` and
+register a codec for each:
+
+```python
+from urllib.parse import parse_qsl
+
+from asgimachine.codec import JsonCodec
+
+
+class FormCodec:
+    """application/x-www-form-urlencoded -> a dict the model can validate."""
+
+    def decode(self, raw: bytes) -> object:
+        return dict(parse_qsl(raw.decode()))
+
+    def encode(self, value: object) -> bytes:  # only needed if you also PRODUCE it
+        raise NotImplementedError
+
+
+class Widgets(Resource):
+    CONSUMES = ("application/json", "application/x-www-form-urlencoded")
+    # ... post_is_create / create_path / apply(ctx, body: WidgetInput) unchanged ...
+
+
+app = build_app([
+    resource_route(
+        "/widgets",
+        Widgets({}),
+        codecs={
+            "application/json": JsonCodec(),                     # (!) include it
+            "application/x-www-form-urlencoded": FormCodec(),
+        },
+    ),
+])
+```
+
+`apply(ctx, body: WidgetInput)` is untouched — a JSON body and a form body both
+arrive as a validated `WidgetInput` (Pydantic even coerces the form's string
+`quantity` into an `int`):
+
+```
+$ curl -sX POST localhost:8000/widgets -H content-type:application/json -d '{"name":"cog","quantity":3}'
+{"id":"1","name":"cog","quantity":3}
+
+$ curl -sX POST localhost:8000/widgets -H content-type:application/x-www-form-urlencoded -d 'name=gear&quantity=5'
+{"id":"2","name":"gear","quantity":5}
+```
+
+!!! warning "Two things that bite here"
+    - **Passing `codecs=` *replaces* the default (JSON-only) registry — it doesn't
+      merge.** If you still accept JSON, list `application/json` explicitly, or
+      JSON requests start returning `415`.
+    - **A media type in `CONSUMES` with no matching codec is a `415`.** `CONSUMES`
+      gates the `Content-Type` header (node B5); the codec does the actual reading.
+      Both must line up.
+
+One codec per media type covers *both* directions: `decode` reads a `CONSUMES`
+request body, and `encode` writes a `PRODUCES` response — so listing a type in both
+and registering one codec makes the resource symmetric in that format.
+
 ## Variations
 
 ### The raw structure, no validation
@@ -145,11 +209,6 @@ The same `apply` handles them — add the method to `ALLOWED_METHODS` and the bo
 parsed identically. (A `POST` that's an *action* rather than a create uses
 `process_post`, which reads the body itself; the typed-body reader is the `apply`
 path — create and update.)
-
-### A non-JSON body
-
-Register a [`Codec`](../concepts/negotiation.md) for the media type at the
-composition root and add it to `CONSUMES`; the decode step then uses it.
 
 ### Cap the size
 
