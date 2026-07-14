@@ -68,6 +68,8 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
+  - Guides:
+      - Accept a request body: guides/request-body.md
   - Concepts:
       - The decision graph: concepts/decision-graph.md
       - The graph, drawn: concepts/flowchart.md
