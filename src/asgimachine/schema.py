@@ -48,6 +48,7 @@ Model = type | dict[str, Any]
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 _EXISTENCE_METHODS = frozenset({"GET", "HEAD", "DELETE", "PATCH"})
 _READ_METHODS = frozenset({"GET", "HEAD"})
+_CONDITIONAL_WRITE_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
 _DOCUMENTABLE = ("get", "post", "put", "patch", "delete")
 
 
@@ -122,6 +123,10 @@ def _auto_error_statuses(resource: Resource[Any], method: str) -> set[int]:
         statuses.add(412)
         if method in _READ_METHODS:
             statuses.add(304)
+    if method in _CONDITIONAL_WRITE_METHODS and _overrides(
+        resource, "require_conditional_write"
+    ):
+        statuses.add(428)
     return statuses
 
 

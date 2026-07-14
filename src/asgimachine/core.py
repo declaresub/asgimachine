@@ -53,6 +53,8 @@ SAFE_METHODS = frozenset({"GET", "HEAD"})
 # Methods that carry a request body; the body-validation nodes (B9/B6/B5/B4) are
 # traversed only for these (a §2.4 pruning — bodyless requests fall through).
 BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
+# Methods that modify existing state, so the lost-update 428 guard can apply.
+CONDITIONAL_WRITE_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
 
 
 async def run(
@@ -460,6 +462,20 @@ async def _walk(resource: Resource[Any], ctx: Ctx) -> HttpResponse:
     # media type is offered, plus each negotiated D/E/F axis. Emitted on cacheable
     # responses (200 and 304) so intermediaries key correctly.
     vary_headers = await _vary_headers(resource, ctx, offered, variant_vary)
+
+    # W1 precondition_required? -> 428 (RFC 6585). A write to a resource that
+    # demands optimistic concurrency but carries no update precondition — the
+    # lost-update guard. Additive node, recorded only when it fires; a present
+    # precondition falls through to the normal 412 path below.
+    if method in CONDITIONAL_WRITE_METHODS and await resource.require_conditional_write(
+        ctx
+    ):
+        headers = request.headers
+        if (
+            headers.get("if-match") is None
+            and headers.get("if-unmodified-since") is None
+        ):
+            raise _halt(ctx, "W1", Status.PRECONDITION_REQUIRED)
 
     # Conditional requests (G8-L17): compute validators once, reuse for the
     # precondition checks and the final response headers.
