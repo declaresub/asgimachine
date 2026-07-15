@@ -26,6 +26,14 @@ Generated from the source docstrings.
 
 ::: asgimachine.command.json_response
 
+## Authorization header parsing
+
+::: asgimachine.auth.parse_authorization
+
+::: asgimachine.auth.bearer_token
+
+::: asgimachine.auth.basic_credentials
+
 ## Authorization policy
 
 ::: asgimachine.policy.RuleEngine
