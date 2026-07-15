@@ -77,6 +77,7 @@ nav:
       - Conditional GET & caching: guides/conditional-caching.md
       - Stream a response: guides/streaming.md
       - Authorization: guides/authorization.md
+      - Serve OpenAPI: guides/openapi.md
   - Concepts:
       - The decision graph: concepts/decision-graph.md
       - The graph, drawn: concepts/flowchart.md
