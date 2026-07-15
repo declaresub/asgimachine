@@ -126,6 +126,36 @@ async def is_authorized(self, ctx: DocCtx) -> bool | str:
 Then `forbidden` (and the policy) can see `ctx.note`, and `resource_exists` just
 reports whether it was found.
 
+## Should you cache parsed credentials?
+
+Rarely — and it's worth knowing why, because the instinct is common.
+
+- **Within a request, `ctx` is the cache.** Parse once in `is_authorized`, stash the
+  principal on `ctx`, and every later callback reads it (the examples above do
+  exactly this). There's nothing to re-parse.
+- **Across requests, cache *verification*, not parsing.** The cost of auth is
+  *checking* the credential — a session/DB lookup, a JWT signature verify — which
+  dwarfs the header parse. An app that cares caches `token → principal`, and that
+  cache already amortizes the parse to once per unique token: a hit skips both, a
+  miss does both once.
+
+The helpers are pure functions, so if a profile ever shows the *parse itself* is hot
+(extreme RPS, cheap verification, long tokens), caching is one line:
+
+```python
+from functools import lru_cache
+
+from asgimachine.auth import bearer_token
+
+cached_bearer = lru_cache(maxsize=4096)(bearer_token)
+```
+
+asgimachine deliberately doesn't ship that cache. It would be a process-global store
+holding **tokens** — secrets — with an unbounded-growth policy (a max size, an
+eviction rule): decisions that belong to your app, not a framework default. And the
+sharper lever, if the parse ever profiles hot, is a cheaper validation path — not a
+cache that retains credentials.
+
 !!! note "401 vs 403 vs 405"
     - **`401`** — *not authenticated*; the client should retry with credentials
       (hence the challenge).
