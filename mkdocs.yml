@@ -76,6 +76,7 @@ nav:
       - Return a specific outcome: guides/response-outcomes.md
       - Conditional GET & caching: guides/conditional-caching.md
       - Stream a response: guides/streaming.md
+      - Authorization: guides/authorization.md
   - Concepts:
       - The decision graph: concepts/decision-graph.md
       - The graph, drawn: concepts/flowchart.md

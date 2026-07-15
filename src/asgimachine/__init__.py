@@ -7,6 +7,7 @@ Starlette; the substrate adapter is imported explicitly from
 
 from __future__ import annotations
 
+from .auth import basic_credentials, bearer_token, parse_authorization
 from .codec import DEFAULT_CODECS, Codec, JsonCodec
 from .command import Command, json_response
 from .core import run
@@ -43,8 +44,11 @@ __all__ = [
     "Status",
     "Trace",
     "TraceEntry",
+    "basic_credentials",
+    "bearer_token",
     "generate_openapi",
     "json_response",
+    "parse_authorization",
     "run",
     "serialize",
 ]
