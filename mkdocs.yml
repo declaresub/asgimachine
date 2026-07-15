@@ -78,6 +78,7 @@ nav:
       - Stream a response: guides/streaming.md
       - Authorization: guides/authorization.md
       - Serve OpenAPI: guides/openapi.md
+      - Content negotiation: guides/content-negotiation.md
   - Concepts:
       - The decision graph: concepts/decision-graph.md
       - The graph, drawn: concepts/flowchart.md
