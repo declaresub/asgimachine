@@ -15,7 +15,9 @@ flowchart TD
     START(["request"]) --> B13
 
     B13{"B13 service_available?"} -->|no| S503(["503 (+ Retry-After)"])
-    B13 -->|yes| B12{"B12 known_method?"}
+    B13 -->|yes| B13a{"B13a within_rate_limit?"}
+    B13a -->|no| S429(["429 (+ Retry-After)"])
+    B13a -->|yes| B12{"B12 known_method?"}
     B12 -->|no| S501(["501"])
     B12 -->|yes| B11{"B11 uri_too_long?"}
     B11 -->|yes| S414(["414"])
@@ -67,8 +69,8 @@ flowchart TD
 
     classDef additive stroke-dasharray:5 5,stroke:#7e57c2,stroke-width:2px;
     classDef status fill:#eef2ff,stroke:#8892d8,color:#333;
-    class B7a,B11,C4a,W1,O20a additive;
-    class S503,S501,S414,S405,S400,S401,S403,S451,S4xx,S200o,S406,S428,S412,S300,S200,S204d,S202,S201 status;
+    class B13a,B7a,B11,C4a,W1,O20a additive;
+    class S503,S429,S501,S414,S405,S400,S401,S403,S451,S4xx,S200o,S406,S428,S412,S300,S200,S204d,S202,S201 status;
 ```
 
 The trunk is the happy path top-to-bottom; every decision branches sideways to the
@@ -85,6 +87,7 @@ exception is handled separately by [`on_exception`](observability.md).
     | Node | Question | Halt | Callback / declaration |
     |---|---|---|---|
     | B13 | service available? | 503 (+ Retry-After) | `service_available` |
+    | B13a | within rate limit? *(additive)* | 429 (+ Retry-After) | `within_rate_limit` |
     | B12 | known method? | 501 | `KNOWN_METHODS` |
     | B11 | URI too long? *(additive)* | 414 | `uri_too_long` |
     | B10 | method allowed? | 405 + Allow | `allowed_methods` / `ALLOWED_METHODS` |

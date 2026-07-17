@@ -106,6 +106,7 @@ The mapping, all derived — you never restate it:
 | `generate_etag` / `last_modified` | `412`, and `304` on reads |
 | `is_conflict` | `409` |
 | `require_conditional_write` | `428` |
+| `within_rate_limit` | `429` |
 | `uri_too_long` | `414` |
 | `ALLOWED_METHODS`, `PRODUCES` | the methods, the `406`, the media types |
 | the route path | the `path` parameters |

@@ -57,6 +57,7 @@ traced only when it fires and never disturbs the canonical path.
 
 | Node | Behavior | Result | Callback |
 |---|---|---|---|
+| B13a | Within rate limit? (per-client quota) | 429 (RFC 6585) + `Retry-After` | `within_rate_limit` |
 | B7a | Legally restricted? | 451 (RFC 7725) | `is_legally_restricted` |
 | K5a | Permanent method-preserving redirect | 308 (RFC 7538) | `permanent_redirect` |
 | C4a | Serve-anyway (disregard an unsatisfiable `Accept`) | default instead of 406 (RFC 9110 §12.1) | `ignore_unacceptable` / `IGNORE_UNACCEPTABLE` |
@@ -65,8 +66,8 @@ traced only when it fires and never disturbs the canonical path.
 | P0 | Body parse (parse, don't validate) | 400 | `apply`'s typed `body` |
 | — | Negotiated error bodies | RFC 9457 `problem+json` on every 4xx/5xx | `error_body` / `ERROR_PRODUCES` |
 
-The `a`-suffixed labels (`B7a`, `K5a`, `C4a`, and the `N11a` see-other step) mark
-additive nodes so they read distinctly in a trace.
+The `a`-suffixed labels (`B13a`, `B7a`, `K5a`, `C4a`, and the `N11a` see-other step)
+mark additive nodes so they read distinctly in a trace.
 
 ## Deliberately omitted (won't add)
 

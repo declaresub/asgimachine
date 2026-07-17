@@ -10,6 +10,11 @@ Two questions, two callbacks, two status codes:
 They run early — B8 then B7, both *before* `resource_exists` — so a request that
 can't identify or isn't allowed is turned away before any work.
 
+!!! tip "Protecting the login itself"
+    Authentication answers *who you are*; it doesn't cap *how often you may try*. To
+    throttle credential-stuffing against a login route, add a limiter at an even
+    earlier node — see [Rate-limit an auth endpoint](rate-limiting.md).
+
 ```python
 from dataclasses import dataclass
 

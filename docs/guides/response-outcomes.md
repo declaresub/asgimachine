@@ -13,6 +13,7 @@ the graph produces the status *and* the right headers — `Location`, `Allow`,
 | `303 See Other` + `Location` | `see_other` → a URL (on a POST) | N11a |
 | `301` / `308` / `307` + `Location` | `moved_permanently` / `permanent_redirect` / `moved_temporarily` | K5 / K5a / L5 |
 | `410 Gone` | `previously_existed` → `True`, no redirect | M5 |
+| `503` / `429` + `Retry-After` | `service_available` / `within_rate_limit` → a hint | B13 / B13a |
 | `404` / `401` / `403` / `409` / `428` / … | the matching gate callback returns its "no" | — |
 | anything the callbacks don't cover | `raise HaltResponse(...)` | — |
 
@@ -63,6 +64,23 @@ client at a status monitor (see [the deadline story](../concepts/webmachine-cove
 async def accepted(self, ctx: Ctx) -> str | None:
     return f"/jobs/{job_id}"   # -> 202 Accepted + Location: /jobs/{job_id}
 ```
+
+## Back off — `503` and `429`
+
+Two early gates ask "can we serve this *right now*?", and both may return a
+`Retry-After` hint — an `int` (delta-seconds) or a `datetime` (an HTTP-date):
+
+```python
+async def service_available(self, ctx: Ctx) -> bool:
+    return 30                    # -> 503, service-wide: down for everyone (B13)
+
+async def within_rate_limit(self, ctx: Ctx) -> bool:
+    return 5                     # -> 429, this client is over its quota (B13a)
+```
+
+`503` is service-wide backpressure (maintenance, overload); `429` is a per-client
+quota, checked one step later and *before* auth or body work, so a flood is shed
+cheaply. See [Rate-limit an auth endpoint](rate-limiting.md) for a worked limiter.
 
 ## Redirect after a POST — `303`
 
