@@ -4,19 +4,17 @@
 login route you want to protect from credential-stuffing — and answer an over-limit
 request with `429 Too Many Requests` + `Retry-After`.
 
-There's no rate-limit *node* in the graph, and that's deliberate: rate-limiting is a
-[collaborator you wire in](../concepts/build-model-rent.md), not a resource property
-the graph decides. But it has a natural home. `service_available` (node **B13**) is
-the **first** thing the graph evaluates — before authentication, before the body is
-even read — so a limiter there sheds the flood at the cheapest possible point, before
-a rejected request touches your database or your password hasher.
+That's a first-class node. `within_rate_limit` (**B13a**) runs right after
+`service_available` and *before* method, auth, and body checks, so an over-limit
+request is shed at the cheapest possible point — before a rejected request touches
+your database or your password hasher. Return `True` to proceed, or a `Retry-After`
+hint (`int` seconds, or a `datetime`) to reject with `429`.
 
 ```python
 import math
 import time
 from dataclasses import dataclass, field
 
-from asgimachine.http import HaltResponse, HttpResponse
 from asgimachine.resource import Ctx, Resource
 
 
@@ -63,13 +61,9 @@ class Login(Resource):
     def __init__(self, limiter: RateLimiter) -> None:
         self._limiter = limiter
 
-    async def service_available(self, ctx: Ctx) -> bool:
+    async def within_rate_limit(self, ctx: Ctx) -> bool | int:
         retry_after = self._limiter.check(client_key(ctx))
-        if retry_after is not None:
-            raise HaltResponse(
-                HttpResponse(status=429, headers={"Retry-After": str(retry_after)})
-            )
-        return True
+        return True if retry_after is None else retry_after   # int -> 429 + Retry-After
 
     async def process_post(self, ctx: Ctx) -> object:
         ...  # verify credentials, mint a session — reached only within the limit
@@ -100,42 +94,41 @@ $ for i in $(seq 5); do
 429 1
 ```
 
-## Why `429`, not `503`
+## `429` vs `503`
 
-`service_available` can *return* a `Retry-After` hint directly — an `int` or a
-`datetime` — and the graph turns that into a **`503 Service Unavailable`** (see
-[Return a specific outcome](response-outcomes.md)). So why raise `HaltResponse` for a
-`429` instead?
+`within_rate_limit` is the sibling of `service_available` (**B13**), one node earlier.
+Same return shape — `bool` or a `Retry-After` hint — but a different meaning, and the
+graph gives each its own status:
 
-Because the two statuses mean different things, and the distinction is worth keeping:
-
-- **`503`** — *the service* can't take this right now, for anyone: a maintenance
-  window, shedding load under overload. Return the hint from `service_available`; it's
-  on-graph and lands in the trace as **B13**.
-- **`429`** — *this client* is over its own quota; everyone else is fine. That's a
-  per-caller verdict, so raise `HaltResponse` with a `429`.
+- **`503`** (`service_available`) — *the service* can't take this right now, for
+  anyone: a maintenance window, shedding load under overload.
+- **`429`** (`within_rate_limit`) — *this client* is over its own quota; everyone else
+  is fine.
 
 Both carry `Retry-After` (RFC 9110 §10.2.3), so a well-behaved client backs off either
-way — but returning `503` to a rate-limited user tells your monitoring the service is
-*down* when it isn't. Reach for `429`.
+way — but returning `503` to a rate-limited user would tell your monitoring the service
+is *down* when it isn't. Reach for the node that matches the reason.
 
-!!! note "The 429 is an explicit halt, so it's off-graph"
-    Raising `HaltResponse` short-circuits the walk before B13 is recorded, so a
-    rate-limited request adds **no node** to `X-Asgimachine-Trace` — it never became a
-    graph decision. That's the trade for a status the graph doesn't model. If you'd
-    rather stay on-graph, the `503` path above is fully traced.
+Because it's an additive node, `B13a` lands in `X-Asgimachine-Trace` **only when it
+fires** — a within-limit request's trace is unchanged:
+
+```
+X-Asgimachine-Trace: B13,B13a          # the 429 path
+```
 
 ## Choosing the key
 
 `client_key` decides *who* a bucket belongs to, and it's the part that actually
-matters:
+matters. B13a runs before authentication, so the principal isn't known yet — key on
+what's in the request:
 
 - **By IP** — the default above. Only trust `X-Forwarded-For` behind a proxy you
   control that *overwrites* it; a raw client can forge the header, so never key on it
   when directly exposed. Fall back to the ASGI peer address otherwise.
-- **By username** — for login, keying on the *submitted* username (once the body is
-  read) throttles an attacker working one account, regardless of IP. You can combine
-  both: an IP bucket at B13, plus a per-username check inside `process_post`.
+- **By username** — for login, throttling a specific account needs the *submitted*
+  username, which lives in the body (read after B13a). Do that second check in
+  `process_post` — an IP bucket at B13a sheds the flood; a per-username counter inside
+  the handler stops a slow drip against one account.
 - **By credential** — for token endpoints, key on the API key or client id.
 
 ## Scope: this bucket is per-process
@@ -147,10 +140,10 @@ shared store (Redis's `INCR`/`EXPIRE`, or a sliding-window script): the seam is 
 same — `check(key) -> int | None` — so only `RateLimiter` changes, not `Login`.
 
 !!! tip "Rate-limit the endpoints that need it, not everything"
-    Rate-limiting belongs on the routes an attacker abuses — login, token issuance,
-    password reset, anything that gates a secret or does expensive work. Give those
-    resources a `service_available` check; leave the rest alone. It's a per-resource
-    collaborator precisely so you can be selective. See
+    `within_rate_limit` defaults to *no limit*, so it costs nothing until you override
+    it. Add it to the routes an attacker abuses — login, token issuance, password
+    reset, anything that gates a secret or does expensive work — and leave the rest
+    alone. It's a per-resource callback precisely so you can be selective. See
     [Build, model, or rent](../concepts/build-model-rent.md) for why this isn't a
     framework-wide middleware.
 
@@ -158,5 +151,7 @@ same — `check(key) -> int | None` — so only `RateLimiter` changes, not `Logi
 
 - [Authorization](authorization.md) — the `is_authorized` / `forbidden` callbacks the
   limited endpoint sits in front of.
-- [Return a specific outcome](response-outcomes.md) — the `503` + `Retry-After` path,
-  and the full outcome map.
+- [Return a specific outcome](response-outcomes.md) — the `503` / `429` gates and the
+  full outcome map.
+- [Coverage vs. webmachine](../concepts/webmachine-coverage.md) — B13a among the
+  additive nodes beyond the canonical v3 graph.

@@ -27,10 +27,11 @@ _COVERAGE = _ROOT / "docs" / "concepts" / "webmachine-coverage.md"
 # Every node core.py records to ctx.trace: the request gates (B*), negotiation
 # (C4/D5/F7), existence + conditionals (G/H/I/K/L), the missing-resource branch
 # (K5/K7/L5/M5), the write path (M20/N11/O14/O18/O20/P3), and the additive nodes
-# (B7a/B11/C4a/K5a/N11a/O20a/W1/P0). Keep in sync with the code; the test proves it.
+# (B7a/B11/B13a/C4a/K5a/N11a/O20a/W1/P0). Keep in sync with the code; the test proves it.
 CANONICAL_NODES = frozenset(
     {
         "B13",
+        "B13a",
         "B12",
         "B11",
         "B10",

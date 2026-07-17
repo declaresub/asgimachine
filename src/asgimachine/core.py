@@ -373,6 +373,14 @@ async def _walk(resource: Resource[Any], ctx: Ctx) -> HttpResponse:
         raise _halt(ctx, "B13", Status.SERVICE_UNAVAILABLE, _retry_after(available))
     ctx.trace.record("B13", True)
 
+    # B13a within_rate_limit? -> 429 (+ Retry-After when a hint is returned). 429
+    # postdates webmachine v3, so this is an additive node, recorded only when it
+    # fires. Placed here, an over-limit request is shed before method/auth/body work.
+    # Contrast B13 (503, service-wide) with this (429, this client).
+    within_limit = await resource.within_rate_limit(ctx)
+    if within_limit is not True:
+        raise _halt(ctx, "B13a", Status.TOO_MANY_REQUESTS, _retry_after(within_limit))
+
     # B12 known_method? -> 501
     if method not in resource.KNOWN_METHODS:
         raise _halt(ctx, "B12", Status.NOT_IMPLEMENTED)

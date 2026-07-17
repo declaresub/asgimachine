@@ -88,6 +88,8 @@ def _auto_error_statuses(resource: Resource[Any], method: str) -> set[int]:
     """The candidate error statuses for ``method``, from overridden callbacks."""
 
     statuses: set[int] = set()
+    if _overrides(resource, "within_rate_limit"):
+        statuses.add(429)  # B13a per-client rate limit
     if _overrides(resource, "uri_too_long"):
         statuses.add(414)
     if _overrides(resource, "is_authorized"):

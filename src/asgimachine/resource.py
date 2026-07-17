@@ -137,8 +137,21 @@ class Resource[C: Ctx = Ctx]:
     async def service_available(self, ctx: C) -> bool | RetryHint:
         # True = available. False = 503 with no hint. An int (delta-seconds) or a
         # datetime (an HTTP-date) = 503 carrying a ``Retry-After`` header (RFC 9110
-        # §10.2.3) — e.g. return 30 during a brief maintenance window. (The same
-        # return type a future per-resource rate-limit node would use for 429.)
+        # §10.2.3) — e.g. return 30 during a brief maintenance window. This is
+        # service-*wide* backpressure; a per-client quota is within_rate_limit below.
+        return True
+
+    # --- B13a --------------------------------------------------------------
+    async def within_rate_limit(self, ctx: C) -> bool | RetryHint:
+        # True = within limit, proceed. False = 429 (Too Many Requests, RFC 6585)
+        # with no hint. An int (delta-seconds) or datetime (an HTTP-date) = 429
+        # carrying a ``Retry-After`` header. Runs right after service_available and
+        # before method/auth/body checks, so an over-limit request is shed at the
+        # cheapest point — ideal for throttling a login against credential-stuffing.
+        # Key the limiter on ctx.request (IP, header) — the principal isn't known
+        # yet. 429 postdates webmachine v3; this is an additive node, recorded only
+        # when it fires. Default True (no limit). Contrast service_available (503,
+        # everyone) with this (429, this client).
         return True
 
     # --- B11 ---------------------------------------------------------------
