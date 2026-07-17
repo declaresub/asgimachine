@@ -68,6 +68,8 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
+  - When to use it: when-to-use.md
+  - vs other frameworks: comparison.md
   - Guides:
       - Accept a request body: guides/request-body.md
       - Read a path parameter: guides/path-parameters.md

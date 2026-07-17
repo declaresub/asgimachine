@@ -68,3 +68,9 @@ Those few callbacks already answer `200` + `ETag`, a conditional `304`, `405` wi
 an `Allow` header, and `406` on a failed negotiation — for free. See
 [Quickstart](quickstart.md) to run it, then [Concepts](concepts/decision-graph.md)
 for how the graph works.
+
+!!! question "Is this the right tool for you?"
+    asgimachine has a narrow grain and says so plainly. Before you invest, read
+    [When to use it](when-to-use.md) (what fits and what doesn't) and
+    [vs other frameworks](comparison.md) (a blunt comparison with FastAPI, Flask,
+    and Django) — they'll tell you honestly when to reach for something else.
