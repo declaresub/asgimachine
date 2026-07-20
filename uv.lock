@@ -34,7 +34,6 @@ wheels = [
 
 [[package]]
 name = "asgimachine"
-version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "abnf" },

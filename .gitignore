@@ -3,6 +3,9 @@
 # Python
 __pycache__/
 *.py[cod]
+
+# hatch-vcs build-time version file (generated, never committed)
+src/asgimachine/_version.py
 .venv/
 build/
 dist/
