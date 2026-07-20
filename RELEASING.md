@@ -4,10 +4,10 @@ The maintainer-facing runbook for cutting a release. It complements
 [SECURITY.md](SECURITY.md), which tells a *consumer* how to verify a release; this
 tells the *maintainer* how to produce one.
 
-> **Status: plan, not yet in effect.** asgimachine is not on PyPI. The versioning
-> section below is the agreed approach and can be wired up at any time (it works for
-> local `uv build`s immediately); the release-flow section is an outline to be
-> completed when we commit to publishing.
+> **Status: versioning is live; publishing is not.** The versioning setup below is
+> **in effect** — `pyproject.toml` uses `hatch-vcs`, so `uv build` already produces
+> tag-derived versions. asgimachine is **not** on PyPI yet; the release-flow section
+> is an outline to be completed when we commit to publishing.
 
 ## Versioning
 
@@ -32,7 +32,7 @@ which is exactly why **we publish only from a tagged commit**, where the version
 comes out clean. Between releases, local builds carry the dev suffix; that's correct
 and harmless.
 
-### pyproject.toml changes (when we enable it)
+### pyproject.toml configuration (in effect)
 
 ```toml
 [project]
@@ -86,8 +86,10 @@ out in the CHANGELOG; we don't promise SemVer stability until a `1.0`. (See
 ### Two footguns
 
 1. **CI must fetch tags and full history.** `actions/checkout` defaults to a shallow
-   clone with **no tags**, so a build there would compute `0.0.0` or fail. The
-   build/publish workflow's checkout needs `fetch-depth: 0` **and** `fetch-tags: true`.
+   clone with **no tags**, so a build there would compute `0.0.0` or fail. Any job
+   that builds the project (CI `test`, docs `build`, and the future publish workflow)
+   sets `fetch-depth: 0` on checkout — already done for the first two. The security
+   job doesn't build the project, so it stays shallow.
 2. **Tags are immutable — verify the version *before* pushing the tag.** Since the
    `refs/tags/v*` ruleset forbids deletion/force-push, a wrong tag is permanent:
 

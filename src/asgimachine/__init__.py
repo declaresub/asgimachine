@@ -7,6 +7,8 @@ Starlette; the substrate adapter is imported explicitly from
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
+
 from .auth import basic_credentials, bearer_token, parse_authorization
 from .codec import DEFAULT_CODECS, Codec, JsonCodec
 from .command import Command, json_response
@@ -17,6 +19,11 @@ from .policy import Decision, Effect, NamedRule, Policy, RuleEngine
 from .resource import Ctx, Producer, Resource, RetryHint
 from .schema import Operation, ResourceDescription, generate_openapi
 from .trace import TRACE_HEADER, Trace, TraceEntry
+
+try:
+    __version__ = version("asgimachine")
+except PackageNotFoundError:  # running from a source tree, not installed
+    __version__ = "0.0.0"
 
 __all__ = [
     "DEFAULT_CODECS",
@@ -44,6 +51,7 @@ __all__ = [
     "Status",
     "Trace",
     "TraceEntry",
+    "__version__",
     "basic_credentials",
     "bearer_token",
     "generate_openapi",
