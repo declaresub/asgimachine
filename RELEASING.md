@@ -4,10 +4,11 @@ The maintainer-facing runbook for cutting a release. It complements
 [SECURITY.md](SECURITY.md), which tells a *consumer* how to verify a release; this
 tells the *maintainer* how to produce one.
 
-> **Status: versioning is live; publishing is not.** The versioning setup below is
-> **in effect** — `pyproject.toml` uses `hatch-vcs`, so `uv build` already produces
-> tag-derived versions. asgimachine is **not** on PyPI yet; the release-flow section
-> is an outline to be completed when we commit to publishing.
+> **Status: versioning live; publish workflow built; not yet publishing.**
+> `pyproject.toml` uses `hatch-vcs`, so `uv build` produces tag-derived versions, and
+> [`publish.yml`](.github/workflows/publish.yml) is in place. asgimachine is **not** on
+> PyPI yet — the protected environments and the PyPI-side trusted-publisher
+> registration (see *Remaining setup* below) must be done before the first tag.
 
 ## Versioning
 
@@ -103,21 +104,45 @@ out in the CHANGELOG; we don't promise SemVer stability until a `1.0`. (See
 
 ## Release flow
 
-_Outline — to be fleshed out (and the workflows built) when we commit to publishing._
-The provenance controls below are already the stated intent in
-[SECURITY.md](SECURITY.md); this section will become the concrete step list.
+The publish workflow — [`.github/workflows/publish.yml`](.github/workflows/publish.yml)
+— is built. On a `vX.Y.Z` tag it runs four jobs: **build & SBOM** → **TestPyPI** →
+**PyPI** → **sign & GitHub release**. TestPyPI and PyPI publish via **trusted
+publishing (OIDC — no long-lived tokens)** with **PEP 740 attestations**; the release
+job signs the artifacts with **Sigstore** and attaches the wheel, sdist, `.sigstore`
+bundles, and the **CycloneDX SBOM** to the GitHub release. `workflow_dispatch` runs a
+no-publish **dry-run** (build + SBOM only).
+
+To cut a release:
 
 1. Choose the version per the `0.x` policy above; update the CHANGELOG.
-2. Open a PR with the CHANGELOG (and, first time, the pyproject `hatch-vcs` change);
-   required checks green; **squash-merge** (GitHub signs the merge commit).
+2. Open a PR with the CHANGELOG; required checks green; **squash-merge** (GitHub signs
+   the merge commit).
 3. Locally: tag `vX.Y.Z`, run `uv build`, confirm the artifact filename is the exact
-   version — *then* push the tag.
-4. The tag triggers the publish workflow: build → **TestPyPI** (manual approval) →
-   **PyPI** (manual approval), via **trusted publishing (OIDC — no long-lived
-   tokens)**, with Sigstore signatures, build attestations, and a CycloneDX SBOM
-   attached to the GitHub release.
+   version — *then* push the tag. (The workflow re-checks this and fails the build if
+   the built version doesn't match the tag.)
+4. Approve the **`testpypi`** then **`pypi`** environment when the run pauses for
+   review (the manual gate — do not auto-approve).
 5. Verify the published artifacts (wheel, sdist, `.sigstore`, SBOM) on PyPI and the
    GitHub release; then fill in SECURITY.md's "Verifying a release" section.
 
-The publish workflow, protected `testpypi`/`pypi` environments, and the SBOM step are
-tracked as the remaining publishing work — not yet built.
+### Remaining setup before the first release
+
+These are **not yet done** — the workflow can't publish until they are:
+
+- **Protected environments.** `testpypi` and `pypi` must exist with a **required
+  reviewer** (the manual approval gate). Until then the environment key doesn't gate
+  anything. (Repo settings → Environments, or via `gh api`.)
+- **Trusted-publisher registration (PyPI-side, account-level — only the maintainer can
+  do this).** On both **PyPI** and **TestPyPI**, add a *pending* publisher (the project
+  doesn't exist yet) with these exact values:
+
+  | Field | Value |
+  |---|---|
+  | PyPI project name | `asgimachine` |
+  | Owner | `declaresub` |
+  | Repository | `asgimachine` |
+  | Workflow filename | `publish.yml` |
+  | Environment | `pypi` (on PyPI) / `testpypi` (on TestPyPI) |
+
+- **Account hygiene.** 2FA with a hardware key on PyPI/TestPyPI; no long-lived API
+  tokens (trusted publishing only).

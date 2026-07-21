@@ -6,14 +6,40 @@ readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
 authors = [{ name = "Charles Yeomans" }]
+keywords = [
+    "asgi",
+    "http",
+    "webmachine",
+    "rest",
+    "decision-graph",
+    "content-negotiation",
+    "conditional-requests",
+    "starlette",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Typing :: Typed",
+]
 dependencies = [
     "starlette>=0.37",
-    "anyio>=4",
+    "anyio>=4.14.2",
     "abnf>=2.5.1",
 ]
 
 [project.urls]
 Homepage = "https://github.com/declaresub/asgimachine"
+Documentation = "https://declaresub.github.io/asgimachine/"
+Repository = "https://github.com/declaresub/asgimachine"
+Issues = "https://github.com/declaresub/asgimachine/issues"
+Changelog = "https://github.com/declaresub/asgimachine/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
