@@ -32,11 +32,48 @@ Controls currently in place:
   (osv-scanner) on every pull request.
 - **Dependabot** alerts + security updates (7-day cooldown on new releases);
   **secret scanning** + push protection.
+- **Trusted publishing to PyPI** (OIDC, no long-lived tokens) from **protected
+  environments that require manual approval**, with PEP 740 attestations.
 
 ## Verifying a release
 
-_No releases have been published yet._ When releases begin, artifacts will be
-published to PyPI via trusted publishing (OIDC — no long-lived tokens), with
-Sigstore signatures, build attestations, and a CycloneDX SBOM attached to the
-GitHub release. Verification instructions (`gh attestation verify`, Sigstore
-bundle checks) will be documented here then.
+Releases are published to PyPI via **trusted publishing** (OIDC — no long-lived
+tokens) by the [`publish.yml`](.github/workflows/publish.yml) workflow, which also
+attaches a **CycloneDX SBOM** to the [GitHub
+release](https://github.com/declaresub/asgimachine/releases). Every PyPI artifact
+carries a **PEP 740 attestation** binding it to this repository and workflow.
+
+### Verify the PyPI attestation
+
+Each wheel and sdist on PyPI has a build attestation, verifiable with
+[`pypi-attestations`](https://pypi.org/project/pypi-attestations/):
+
+```console
+$ uvx pypi-attestations verify pypi \
+    --repository https://github.com/declaresub/asgimachine \
+    pypi:asgimachine-0.1.0-py3-none-any.whl
+OK: asgimachine-0.1.0-py3-none-any.whl
+```
+
+A pass confirms the file was built and published by this repository's workflow, not
+re-uploaded by a leaked token. The raw provenance is also served by PyPI, e.g.
+<https://pypi.org/integrity/asgimachine/0.1.0/asgimachine-0.1.0-py3-none-any.whl/provenance>,
+and shown on each file's page under the PyPI project.
+
+### Pin by hash
+
+`pip`/`uv` verify PyPI's per-file hashes on install; pin them for a
+reproducible, tamper-evident install (a lockfile with hashes, or
+`--require-hashes`).
+
+### Inspect the SBOM
+
+The GitHub release carries `asgimachine.cdx.json`, a CycloneDX 1.6 bill of
+materials listing the runtime dependency closure. Cross-check it against what you
+actually install.
+
+> **`v0.1.0` note:** its GitHub-release assets do **not** include Sigstore `.sigstore`
+> bundles — a bug in the first release's workflow (since fixed). Its provenance is the
+> PyPI PEP 740 attestation above. From the next release onward, the GitHub release also
+> carries Sigstore bundles, verifiable with `sigstore verify identity` against the
+> workflow identity (`.../.github/workflows/publish.yml@refs/tags/vX.Y.Z`).
