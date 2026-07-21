@@ -1,0 +1,164 @@
+name: Publish
+
+# Tag-driven release. Pushing a `vX.Y.Z` tag builds the artifacts, publishes to
+# TestPyPI then PyPI via trusted publishing (OIDC — no long-lived tokens), and cuts
+# a signed GitHub release with an SBOM. `workflow_dispatch` runs a no-publish
+# dry-run (build + SBOM only) so the build path can be exercised without a tag.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+# No ambient permissions; each job grants only what it needs.
+permissions: {}
+
+concurrency:
+  # Serialize releases; never cancel an in-flight publish.
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build & SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      # Actions pinned to full commit SHAs (repo requires it).
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # hatch-vcs derives the version from tags + history
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3 # v8.3.0
+        with:
+          python-version: "3.13"
+          # No cache in a publishing workflow (cache-poisoning surface).
+          enable-cache: false
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Verify the built version matches the tag
+        if: github.event_name == 'push'
+        run: |
+          shopt -s nullglob
+          whls=(dist/*.whl)
+          built=${whls[0]#dist/asgimachine-}
+          built=${built%-py3-none-any.whl}
+          tag=${GITHUB_REF_NAME#v}
+          if [ "$built" != "$tag" ]; then
+            echo "::error::built version '$built' != tag '$tag' — tags are immutable; fix and re-tag"
+            exit 1
+          fi
+          echo "built version $built matches tag $GITHUB_REF_NAME"
+
+      - name: Check artifact metadata
+        run: uvx twine check dist/*
+
+      - name: Generate CycloneDX SBOM (kept out of dist/)
+        run: |
+          mkdir -p sbom
+          # Runtime closure only (no dev group, no extras on this project).
+          uv export --no-dev --no-hashes --no-emit-project \
+            --format requirements-txt -o sbom/requirements.txt
+          uvx --from cyclonedx-bom cyclonedx-py requirements sbom/requirements.txt \
+            --output-format JSON > sbom/asgimachine.cdx.json
+          rm sbom/requirements.txt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-artifacts
+          path: |
+            dist/
+            sbom/
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/asgimachine
+    permissions:
+      id-token: write # OIDC for trusted publishing
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-artifacts
+          path: .
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+          attestations: true
+          skip-existing: true # tolerate a re-run of the same version
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: publish-testpypi
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/asgimachine
+    permissions:
+      id-token: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-artifacts
+          path: .
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
+        with:
+          packages-dir: dist/
+          attestations: true
+
+  github-release:
+    name: Sign & GitHub release
+    needs: publish-pypi
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the release and upload assets
+      id-token: write # Sigstore OIDC
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-artifacts
+          path: .
+
+      - name: Sign artifacts with Sigstore
+        uses: sigstore/gh-action-sigstore-python@5b79a39c381910c090341a2c9b0bf022c8b387e1 # v3.4.0
+        with:
+          inputs: ./dist/*.tar.gz ./dist/*.whl
+          # Attach via the gh CLI below; don't pull in the release-upload action.
+          release-signing-artifacts: false
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # This job has no checkout, so gh can't infer the repo from git —
+          # give it explicitly (avoids "fatal: not a git repository").
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Release ${GITHUB_REF_NAME}. See [CHANGELOG.md](https://github.com/declaresub/asgimachine/blob/main/CHANGELOG.md)." \
+            dist/* sbom/asgimachine.cdx.json
