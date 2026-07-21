@@ -10,6 +10,8 @@ stability promise until a `1.0` release. Versions are derived from git tags
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-21
+
 Initial release — the webmachine v3 subset plus a slice of RFC-completeness
 extensions, on a Starlette substrate.
 
@@ -36,3 +38,6 @@ extensions, on a Starlette substrate.
 - **Authorization helpers** (`asgimachine.auth`) that parse the `Authorization` header,
   and an ordered Allow/Deny `RuleEngine`.
 - **Typed throughout** (PEP 561 `py.typed`); requires Python 3.13+.
+
+[Unreleased]: https://github.com/declaresub/asgimachine/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/declaresub/asgimachine/releases/tag/v0.1.0
