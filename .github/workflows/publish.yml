@@ -154,6 +154,9 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job has no checkout, so gh can't infer the repo from git —
+          # give it explicitly (avoids "fatal: not a git repository").
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
