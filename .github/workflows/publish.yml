@@ -45,8 +45,11 @@ jobs:
       - name: Verify the built version matches the tag
         if: github.event_name == 'push'
         run: |
-          built=$(ls dist/*.whl | sed -E 's|.*/asgimachine-(.+)-py3-none-any\.whl|\1|')
-          tag="${GITHUB_REF_NAME#v}"
+          shopt -s nullglob
+          whls=(dist/*.whl)
+          built=${whls[0]#dist/asgimachine-}
+          built=${built%-py3-none-any.whl}
+          tag=${GITHUB_REF_NAME#v}
           if [ "$built" != "$tag" ]; then
             echo "::error::built version '$built' != tag '$tag' — tags are immutable; fix and re-tag"
             exit 1
