@@ -74,6 +74,9 @@ packages = ["src/asgimachine"]
 [tool.ruff]
 src = ["src", "tests", "examples"]
 target-version = "py313"
+# ruff >=0.16 formats Python code blocks in Markdown by default; the docs snippets
+# use hand-aligned trailing comments that the formatter would collapse.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 # Rule set per PLAN.md §3. E501 (line length) is deliberately off.
